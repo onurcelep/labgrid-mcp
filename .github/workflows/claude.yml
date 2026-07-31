@@ -1,0 +1,126 @@
+name: Claude Code
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  claude:
+    # Trust boundary for this actor gate: docs/SECURITY-MODEL.md (responder
+    # row). The action's own actor check (write access required) is the
+    # floor; this is a ceiling BELOW it, deliberately narrower than what
+    # GitHub write access alone would allow, because granting a
+    # collaborator write access is a different decision from letting them
+    # spend the repo owner's CLAUDE_CODE_OAUTH_TOKEN. Repo owner is always
+    # trusted (no config needed); extend to a contributor with:
+    #   gh variable set CLAUDE_TRUSTED_ACTORS --body "alice,bob"
+    if: |
+      (
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+        (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      ) &&
+      (
+        github.actor == github.event.repository.owner.login ||
+        contains(format(',{0},', vars.CLAUDE_TRUSTED_ACTORS), format(',{0},', github.actor))
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      # Trust boundary for these scopes: docs/SECURITY-MODEL.md (responder row).
+      # Write per the action's documented example: branch pushes and PR
+      # creation use this workflow token (the app token only covers
+      # comments), so read-only here silently breaks "@claude opens a PR".
+      # main stays PR-only by convention/ruleset, not by this token.
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read # Required for Claude to read CI results on PRs
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Model policy: see the factory:model-routing skill. Sonnet for
+          # responder work, turn-capped. Escalate per-issue by writing
+          # "use opus" in the issue body if needed.
+          claude_args: '--model claude-sonnet-5 --max-turns 40'
+          # The Action does not load the repo's .claude/settings.json (it is
+          # stripped from the runner's checkout), so plugins must be
+          # self-loaded via these inputs rather than relying on settings.json.
+          plugin_marketplaces: 'https://github.com/onurcelep/ai-factory.git'
+          plugins: 'factory@onur'
+          additional_permissions: |
+            actions: read
+
+      - name: Assert the run was not a silent failure
+        # A bad CLAUDE_CODE_OAUTH_TOKEN makes claude-code-action exit 0 (green
+        # check) while doing nothing: the execution log's final result message
+        # reads is_error:true / num_turns:1 / total_cost_usd:0. Honest failures
+        # (max-turns, push 403) already turn the check red, so this fires ONLY on
+        # that exact three-way conjunction — turning the first dead-token run red
+        # instead of waiting for the weekly smoke test. The action documents an
+        # `execution_file` output (path to a JSON array of SDK messages whose
+        # last element is the result message).
+        if: ${{ !cancelled() }}
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          CLAUDE_OUTCOME: ${{ steps.claude.outcome }}
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # Self-report: a failing check explains itself on the triggering
+          # issue/PR (one marked comment, updated in place) so nobody digs
+          # through run logs. Fail-open — a comment error never masks the red.
+          report() {
+            local body
+            body=$(printf '%s\n' \
+              '<!-- factory:ci-self-report -->' \
+              '### CI self-report: @claude run failed its health assertion' '' "$1" '' \
+              "Run: $RUN_URL — diagnosis order: the factory:ci-agent-ops skill.")
+            local cid
+            cid=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" --paginate \
+              --jq '[.[] | select(.body | startswith("<!-- factory:ci-self-report -->"))][0].id' 2>/dev/null || true)
+            if [ -n "${cid:-}" ] && [ "$cid" != "null" ]; then
+              gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${cid}" -f body="$body" >/dev/null 2>&1 || true
+            else
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" -f body="$body" >/dev/null 2>&1 || true
+            fi
+          }
+          if [ -z "$EXECUTION_FILE" ] || [ ! -s "$EXECUTION_FILE" ]; then
+            if [ "$CLAUDE_OUTCOME" = "failure" ]; then
+              echo "Action step already failed for an honest reason; no execution log to assert on."
+              exit 0
+            fi
+            report "**Silent failure.** The action exited green but wrote no execution log and did no work. Retry once by commenting '@claude please retry' (transient API errors share this signature); if it reproduces, suspect CLAUDE_CODE_OAUTH_TOKEN first."
+            echo "::error::Silent failure: claude-code-action exited green but wrote no execution log. See the issue/PR comment."
+            exit 1
+          fi
+          RESULT=$(jq -c 'if type == "array" and length > 0 then .[-1] else {} end | select(.type == "result")' "$EXECUTION_FILE" 2>/dev/null || true)
+          [ -n "$RESULT" ] || { echo "No result message in the execution log; treating as inconclusive."; exit 0; }
+          IS_ERROR=$(jq -r '.is_error // false' <<<"$RESULT")
+          NUM_TURNS=$(jq -r '.num_turns // 0' <<<"$RESULT")
+          COST=$(jq -r '.total_cost_usd // 0' <<<"$RESULT")
+          COST_IS_ZERO=$(jq -rn --argjson c "${COST:-0}" '$c == 0')
+          echo "claude-code-action result: is_error=$IS_ERROR num_turns=$NUM_TURNS total_cost_usd=$COST"
+          if [ "$IS_ERROR" = "true" ] && [ "$NUM_TURNS" -le 1 ] && [ "$COST_IS_ZERO" = "true" ]; then
+            report "**Dead-on-arrival signature** (is_error / 1 turn / USD 0): CLAUDE_CODE_OAUTH_TOKEN is almost certainly bad. Retry once with '@claude please retry'; if it reproduces, rotate with claude setup-token + gh secret set CLAUDE_CODE_OAUTH_TOKEN."
+            echo "::error::Dead-on-arrival signature (is_error / 1 turn / USD 0). See the issue/PR comment."
+            exit 1
+          fi
+          echo "Health assertion passed."

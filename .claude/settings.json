@@ -1,0 +1,11 @@
+{
+  "extraKnownMarketplaces": {
+    "onur": {
+      "source": { "source": "github", "repo": "onurcelep/ai-factory" }
+    }
+  },
+  "enabledPlugins": {
+    "factory@onur": true,
+    "superpowers@claude-plugins-official": true
+  }
+}

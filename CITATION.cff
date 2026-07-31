@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use labgrid-mcp in your work, please cite it as below."
+title: "labgrid-mcp"
+type: software
+authors:
+  - family-names: "Celep"
+    given-names: "Onur"
+repository-code: "https://github.com/onurcelep/labgrid-mcp"
+license: Apache-2.0

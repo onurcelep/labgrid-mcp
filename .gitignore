@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.so
+
+# Virtualenv / tooling
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# uv
+# (uv.lock IS committed once we have a pyproject)
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/

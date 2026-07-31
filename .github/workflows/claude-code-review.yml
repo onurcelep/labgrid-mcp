@@ -1,0 +1,198 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+# One Opus review per push burst, not per push: a new push to the PR
+# cancels the review still running for the previous push.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  claude-review:
+    runs-on: ubuntu-latest
+    # Trust boundary: docs/SECURITY-MODEL.md (review row). Unlike the
+    # responder, this workflow has no @claude/actor check at all upstream —
+    # it fires on every pull_request event. Gate it the same way: repo
+    # owner and 'claude[bot]' (the machine-authored-PR case the allowed_bots
+    # input below exists for) are always trusted; extend to a contributor
+    # with `gh variable set CLAUDE_TRUSTED_ACTORS --body "alice,bob"`.
+    if: |
+      github.event.pull_request.user.login == github.event.repository.owner.login ||
+      github.event.pull_request.user.login == 'claude[bot]' ||
+      contains(format(',{0},', vars.CLAUDE_TRUSTED_ACTORS), format(',{0},', github.event.pull_request.user.login))
+    permissions:
+      # Trust boundary for these scopes: docs/SECURITY-MODEL.md (review row).
+      # pull-requests:write exists ONLY so the assertion step below can post
+      # its self-report comment on the PR when a run fails (PR comments need
+      # this scope, not issues:write — verified via a live 403); it adds no
+      # capability class the job lacks (the app token already posts the
+      # review comment). contents stays read: this job can never push.
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code Review
+        id: claude-review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # One updating review comment per PR instead of one per push burst —
+          # repeated pushes edit the same comment, keeping the PR readable.
+          use_sticky_comment: true
+          # The action refuses runs initiated by non-human actors unless the
+          # bot is allowlisted. Machine-authored PRs (e.g. a scheduled Claude
+          # agent's proposals) are exactly the ones that must not skip review.
+          allowed_bots: 'claude'
+          # Model policy: see the factory:model-routing skill. Opus for the
+          # auto PR review; it runs once per PR and depth matters. The floating
+          # 'opus' alias (vs a dated pin) is deliberate: the review should track
+          # the newest Opus; pin a dated ID only if a regression bites.
+          claude_args: '--model opus'
+          # The Action does not load the repo's .claude/settings.json (it is
+          # stripped from the runner's checkout), so plugins must be
+          # self-loaded via these inputs rather than relying on settings.json.
+          # Both inputs are newline-separated (per claude-code-action docs).
+          plugin_marketplaces: |
+            https://github.com/anthropics/claude-code.git
+            https://github.com/onurcelep/ai-factory.git
+          plugins: |
+            code-review@claude-code-plugins
+            factory@onur
+          # --comment is required for the findings to reach the PR: since
+          # anthropics/claude-code@6dcc7d8b (2026-02-11) the command posts
+          # nothing without it, leaving the review only in the runner log.
+          # The memory nudge below makes this reviewer the enforcement point for
+          # the factory:repo-memory write path (its YES/NO lists are the criteria):
+          # agents under turn pressure skip the memory write first, and nothing
+          # else notices the omission.
+          # Posting discipline (added after two real incidents): review runs
+          # completed "successfully" without posting — one ended its turn
+          # "waiting" for spawned subagents (which terminates the run and
+          # orphans them), one finished a full review and simply never
+          # posted. The assert step below turns both into red checks; this
+          # prompt clause is the prevention.
+          prompt: |
+            /code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }} --comment
+            Additionally: if this change clearly reflects a non-obvious, reusable learning by the factory:repo-memory skill's criteria (an environment quirk, a hard-won gotcha, a cross-component contract — not anything derivable from the code or git history) and the PR neither adds nor updates a docs/memory/ fact, report that as a finding. Routine changes must not be flagged.
+            Posting discipline (mandatory): the review is complete ONLY when a review comment is actually posted on the PR. Never end your turn while spawned subagents are still running — ending your turn terminates the run and orphans them; keep working until their results are in. If there are no findings, still post a brief comment saying the review found nothing. Finishing without a posted comment fails this workflow's assert step.
+
+      - name: Assert the review was not a silent failure
+        id: assert
+        # A bad CLAUDE_CODE_OAUTH_TOKEN makes claude-code-action exit 0 (green
+        # check) while doing nothing: the execution log's final result message
+        # reads is_error:true / num_turns:1 / total_cost_usd:0, and the PR gets
+        # a green review check with no review comment. Honest failures already
+        # turn the check red, so this fires ONLY on that exact three-way
+        # conjunction. The action documents an `execution_file` output (path to
+        # a JSON array of SDK messages whose last element is the result message).
+        # !cancelled() keeps a superseded run (cancel-in-progress above) from
+        # failing on an empty log.
+        if: ${{ !cancelled() }}
+        env:
+          EXECUTION_FILE: ${{ steps.claude-review.outputs.execution_file }}
+          CLAUDE_OUTCOME: ${{ steps.claude-review.outcome }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # Self-report: a failing check explains itself on the PR (one marked
+          # comment, updated in place) so nobody digs through run logs to learn
+          # what this step already knew. Reporting is fail-open — a comment
+          # error never masks or replaces the red check.
+          report() {
+            local body
+            body=$(printf '%s\n' \
+              '<!-- factory:ci-self-report -->' \
+              '### CI self-report: review check failed' '' "$1" '' \
+              "Run: $RUN_URL — diagnosis order: the factory:ci-agent-ops skill.")
+            local cid
+            cid=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+              --jq '[.[] | select(.body | startswith("<!-- factory:ci-self-report -->"))][0].id' 2>/dev/null || true)
+            if [ -n "${cid:-}" ] && [ "$cid" != "null" ]; then
+              gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${cid}" -f body="$body" >/dev/null 2>&1 || echo "self-report: comment update failed (fail-open)"
+            else
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$body" >/dev/null 2>&1 || echo "self-report: comment post failed (fail-open)"
+            fi
+          }
+          if [ -z "$EXECUTION_FILE" ] || [ ! -s "$EXECUTION_FILE" ]; then
+            if [ "$CLAUDE_OUTCOME" = "failure" ]; then
+              echo "Review step already failed for an honest reason; no execution log to assert on."
+              exit 0
+            fi
+            # Discriminate the two no-log causes: the action's anti-tamper skip
+            # (this PR edits the review workflow file) vs a silent failure.
+            if gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename' 2>/dev/null \
+                | grep -qx '.github/workflows/claude-code-review.yml'; then
+              report "**Expected red — anti-tamper skip.** This PR modifies the review workflow file, so the action refuses to run it (the file must match the default branch). No token problem; the review runs normally on the next PR after this one merges."
+              echo "::error::Anti-tamper skip: this PR edits the review workflow (expected red; see the PR comment)."
+              exit 1
+            fi
+            report "**Silent failure.** The action exited green but wrote no execution log. Retry once (transient API errors share this signature); if it reproduces, suspect CLAUDE_CODE_OAUTH_TOKEN first."
+            echo "::error::Silent failure: claude-code-action exited green but wrote no execution log. See the PR comment."
+            exit 1
+          fi
+          RESULT=$(jq -c 'if type == "array" and length > 0 then .[-1] else {} end | select(.type == "result")' "$EXECUTION_FILE" 2>/dev/null || true)
+          [ -n "$RESULT" ] || { echo "No result message in the execution log; treating as inconclusive."; exit 0; }
+          IS_ERROR=$(jq -r '.is_error // false' <<<"$RESULT")
+          NUM_TURNS=$(jq -r '.num_turns // 0' <<<"$RESULT")
+          COST=$(jq -r '.total_cost_usd // 0' <<<"$RESULT")
+          COST_IS_ZERO=$(jq -rn --argjson c "${COST:-0}" '$c == 0')
+          echo "claude-code-action result: is_error=$IS_ERROR num_turns=$NUM_TURNS total_cost_usd=$COST"
+          if [ "$IS_ERROR" = "true" ] && [ "$NUM_TURNS" -le 1 ] && [ "$COST_IS_ZERO" = "true" ]; then
+            report "**Dead-on-arrival signature** (is_error / 1 turn / USD 0): CLAUDE_CODE_OAUTH_TOKEN is almost certainly bad. Retry once; if it reproduces, rotate with claude setup-token + gh secret set CLAUDE_CODE_OAUTH_TOKEN."
+            echo "::error::Dead-on-arrival signature (is_error / 1 turn / USD 0). See the PR comment."
+            exit 1
+          fi
+          # Artifact assertion (added after a real incident, 2026-07-12): a
+          # healthy-LOOKING run (37 turns, $5, is_error:false) once posted
+          # nothing — the agent was permission-denied out of commenting
+          # (permission_denials_count: 56) and "completed" by narrating.
+          # Metrics only prove the run worked; the posted comment is what
+          # proves a REVIEW happened. Require one artifact from the app bot
+          # on any of the three surfaces (excluding this step's own
+          # self-report comment).
+          DENIALS=$(jq -r '.permission_denials_count // 0' <<<"$RESULT")
+          echo "high_denials=$([ "${DENIALS:-0}" -gt 20 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          # Exact bot login (-F -x): a substring match would false-positive on
+          # any user with "claude" in the name and silently rot if it did.
+          ARTIFACTS=$(
+            {
+              gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+                --jq '.[] | select((.body | startswith("<!-- factory:ci-self-report -->")) | not) | .user.login' 2>/dev/null
+              gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/comments" --paginate --jq '.[].user.login' 2>/dev/null
+              gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews" --paginate --jq '.[].user.login' 2>/dev/null
+            } | grep -Fcxi 'claude[bot]' || true
+          )
+          if [ "${ARTIFACTS:-0}" -eq 0 ]; then
+            report "**Review ran but posted nothing** (num_turns=$NUM_TURNS, cost=$COST, permission_denials=$DENIALS). A review with no posted comment is unverifiable — treat this PR as not reviewed. A high denial count means the agent was blocked from acting (check the workflow's --allowedTools against what CLAUDE.md tells agents to do); retry by pushing a new commit."
+            echo "::error::Review produced no posted artifact (comment/review). See the PR comment."
+            exit 1
+          fi
+          [ "${DENIALS:-0}" -le 20 ] || echo "::warning::High permission-denial count ($DENIALS): the review agent was repeatedly blocked — check --allowedTools vs the instructions it was given."
+          echo "Health + artifact assertions passed (artifacts=$ARTIFACTS, denials=$DENIALS)."
+
+      - name: Preserve execution log when evidence is needed
+        # The execution trace is the only record of WHICH tool calls were
+        # denied — without it, incident diagnosis is archaeology. But on
+        # public repos, run artifacts are publicly downloadable, so healthy
+        # runs' traces are not published: upload only when the assertion
+        # failed or the denial count was high (the two cases where the trace
+        # is the evidence).
+        if: ${{ !cancelled() && (steps.assert.outcome == 'failure' || steps.assert.outputs.high_denials == 'true') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-review-execution-${{ github.run_id }}
+          path: ${{ steps.claude-review.outputs.execution_file }}
+          retention-days: 14
+          if-no-files-found: ignore

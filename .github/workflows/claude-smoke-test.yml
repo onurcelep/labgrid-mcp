@@ -1,0 +1,103 @@
+name: Claude Smoke Test
+
+on:
+  schedule:
+    # Weekly, Monday 07:37 UTC. Off-minute on purpose: :00/:30 cron marks are
+    # fleet-wide stampedes on shared infrastructure (same rule as frontier-audit).
+    - cron: '37 7 * * 1'
+  workflow_dispatch: # on-demand liveness check after a token / secret / App change
+
+# Never two smoke tests at once; a manual run supersedes a stuck scheduled one.
+concurrency:
+  group: claude-smoke-test
+  cancel-in-progress: true
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    permissions:
+      # The smoke test only invokes the action with a trivial prompt and reads
+      # its execution log — it posts nothing and pushes nothing. Read-only
+      # contents plus the OIDC token the action needs is the whole surface.
+      contents: read
+      id-token: write
+      # issues:write exists ONLY so a failing probe can file/update the
+      # "CI health" issue (self-report) — a scheduled red is otherwise invisible.
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude smoke test
+        id: smoke
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Cheapest capable model on purpose: this is a liveness probe, not
+          # real work — a one-turn reply. See the factory:model-routing skill;
+          # Haiku is the floor of the routing ladder and all a "pong" needs.
+          claude_args: '--model claude-haiku-4-5 --max-turns 2'
+          prompt: 'Reply with the single word: pong. Do nothing else.'
+
+      - name: Assert the run was not a silent failure
+        # The dead-on-arrival signature (a bad CLAUDE_CODE_OAUTH_TOKEN): the
+        # action exits 0 — green check — while doing nothing, and the execution
+        # log's final result message reads is_error:true / num_turns:1 /
+        # total_cost_usd:0 (~2s). claude-code-action documents an `execution_file`
+        # output: the path to a JSON array of SDK messages whose last element is
+        # the result message (see the action's action.yml `outputs`, and
+        # base-action/src/execution-file.ts, which writes JSON.stringify(messages)).
+        # A healthy pong has is_error:false, so the exact three-way conjunction
+        # below never fires on a good run — even a legitimately one-turn reply.
+        if: ${{ !cancelled() }}
+        env:
+          EXECUTION_FILE: ${{ steps.smoke.outputs.execution_file }}
+          CLAUDE_OUTCOME: ${{ steps.smoke.outcome }}
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # Self-report: a scheduled red on a repo nobody is watching is
+          # invisible — so a failing smoke test files (or updates) a health
+          # issue instead of relying on someone reading Actions. Fail-open:
+          # an issue-posting error never masks the red check.
+          TITLE="CI health: Claude smoke test failing"
+          report() {
+            local body
+            body=$(printf '%s\n' \
+              '<!-- factory:ci-self-report -->' \
+              "$1" '' \
+              "Run: $RUN_URL — diagnosis order: the factory:ci-agent-ops skill." \
+              'This issue was filed automatically by the smoke-test workflow; close it once a rerun passes.')
+            local num
+            num=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number' 2>/dev/null || true)
+            if [ -n "${num:-}" ] && [ "$num" != "null" ]; then
+              gh issue comment "$num" --body "$body" >/dev/null 2>&1 || true
+            else
+              gh issue create --title "$TITLE" --body "$body" >/dev/null 2>&1 || true
+            fi
+          }
+          if [ -z "$EXECUTION_FILE" ] || [ ! -s "$EXECUTION_FILE" ]; then
+            report "**Silent failure.** The smoke probe produced no execution log (step outcome: $CLAUDE_OUTCOME). Suspect CLAUDE_CODE_OAUTH_TOKEN first; verify only in CI (local token checks are a trap — the CLI silently prefers keychain credentials)."
+            echo "::error::Smoke test: no execution log (outcome: $CLAUDE_OUTCOME). A health issue was filed."
+            exit 1
+          fi
+          RESULT=$(jq -c 'if type == "array" and length > 0 then .[-1] else {} end | select(.type == "result")' "$EXECUTION_FILE" 2>/dev/null || true)
+          if [ -z "$RESULT" ]; then
+            report "**No result message in the smoke probe's execution log.** The run did not complete a turn — check CLAUDE_CODE_OAUTH_TOKEN and the Claude GitHub App installation."
+            echo "::error::Smoke test: no result message in the execution log. A health issue was filed."
+            exit 1
+          fi
+          IS_ERROR=$(jq -r '.is_error // false' <<<"$RESULT")
+          NUM_TURNS=$(jq -r '.num_turns // 0' <<<"$RESULT")
+          COST=$(jq -r '.total_cost_usd // 0' <<<"$RESULT")
+          COST_IS_ZERO=$(jq -rn --argjson c "${COST:-0}" '$c == 0')
+          echo "claude-code-action result: is_error=$IS_ERROR num_turns=$NUM_TURNS total_cost_usd=$COST"
+          if [ "$IS_ERROR" = "true" ] && [ "$NUM_TURNS" -le 1 ] && [ "$COST_IS_ZERO" = "true" ]; then
+            report "**Dead-on-arrival signature** (is_error / 1 turn / USD 0): CLAUDE_CODE_OAUTH_TOKEN is almost certainly bad. Rotate with claude setup-token + gh secret set CLAUDE_CODE_OAUTH_TOKEN, then re-run this workflow (workflow_dispatch) and close this issue when it passes."
+            echo "::error::Smoke test: dead-on-arrival signature. A health issue was filed."
+            exit 1
+          fi
+          echo "Smoke test passed: the action ran a turn and billed real work."

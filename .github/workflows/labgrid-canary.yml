@@ -1,0 +1,53 @@
+name: labgrid master canary
+
+# Decision #12 (docs/DESIGN.md section 2): we pin a labgrid version range in
+# pyproject.toml (currently >=26.0,<27) because labgrid-mcp imports
+# labgrid.remote.generated / labgrid.remote.common and reuses client
+# internals that are not a stable public API, and labgrid's own gRPC layer is
+# still young. The pin protects users from upstream churn; this scheduled
+# canary is the tripwire that catches upstream breakage before they hit it --
+# it installs our normal pinned environment, then forcibly overrides labgrid
+# to the tip of its main branch and re-runs the suite. A red run here is an
+# upstream-drift signal, not a regression in this repo: it means the pieces
+# of labgrid we rely on (see docs/DESIGN.md section 11, "Verified
+# implementation reference") moved and section 11 needs re-verifying before
+# the pin is bumped.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # every Monday 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install openssh-server (SSH e2e needs /usr/sbin/sshd; ubuntu runners ship client only)
+        run: sudo apt-get update -q && sudo apt-get install -y -q openssh-server
+
+      - name: Sync dependencies (pinned labgrid)
+        run: uv sync
+
+      - name: Override labgrid to git main
+        run: uv pip install "labgrid @ git+https://github.com/labgrid-project/labgrid.git"
+
+      # --no-sync below is LOAD-BEARING: a plain `uv run` re-syncs the venv
+      # against uv.lock first, silently reinstalling the PINNED labgrid and
+      # turning this canary into a weekly green no-op. Do not remove it.
+      - name: Unit tests against labgrid master (required)
+        run: uv run --no-sync pytest -W error
+
+      - name: Integration tests against labgrid master (best-effort)
+        continue-on-error: true
+        run: uv run --no-sync pytest -m integration -v

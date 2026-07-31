@@ -1,0 +1,50 @@
+name: Tests
+
+# Lint, type-check, and run the FULL test suite (unit + integration) on every
+# pull request and every push to main. The integration suite is hardware-free
+# by design (DESIGN.md, decisions log): the coordinator, exporter, TCP serial
+# bridge, and fake HTTP power/io switch it drives all run as plain local
+# subprocesses, so this job can and does run them on a bare ubuntu-latest
+# runner -- no hardware, no secrets, no external services.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install openssh-server (SSH e2e needs /usr/sbin/sshd; ubuntu runners ship client only)
+        run: sudo apt-get update -q && sudo apt-get install -y -q openssh-server
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Lint (ruff)
+        run: uv run ruff check
+
+      - name: Type check (mypy --strict, src + tests)
+        run: uv run mypy
+
+      - name: Unit tests (0 warnings tolerated)
+        run: uv run pytest -W error
+
+      - name: Integration tests (hardware-free e2e)
+        run: uv run pytest -m integration -v
