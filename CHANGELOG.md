@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-08-04
+
+### Fixed
+
+- **Pin `mcp>=1.2,<2`.** The MCP Python SDK's 2.0.0 release removes
+  `mcp.server.fastmcp`, so a fresh install (e.g. `uvx labgrid-mcp`) resolved
+  a version the server cannot import and crashed on startup. The upper bound
+  restores installability; migrating to the 2.x SDK API is future work.
+
 ## [0.1.0] - 2026-08-04
 
 Initial implementation: a standalone, coordinator-agnostic MCP server over
