@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-08-04
+
+### Fixed
+
+- **`labgrid-mcp demo` now prints the install-agnostic `uvx` config
+  snippet.** It previously rendered a `uv run --directory <cwd>` snippet
+  that only worked from a source checkout and embedded whatever directory
+  the demo happened to be started from.
+
 ## [0.1.1] - 2026-08-04
 
 ### Fixed

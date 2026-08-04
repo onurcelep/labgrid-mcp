@@ -394,14 +394,18 @@ async def seed_place(stack: DemoStack, *, timeout: float = _CONNECT_TIMEOUT_S) -
 
 
 def _mcp_snippet(port: int) -> str:
-    """Ready-to-paste ``.mcp.json``, same shape as the README's Configure section."""
-    directory = Path.cwd()
+    """Ready-to-paste ``.mcp.json``, same shape as the README's Configure section.
+
+    Uses the ``uvx`` form: it is correct however labgrid-mcp was installed,
+    whereas a ``uv run --directory <cwd>`` snippet is only valid from a
+    source checkout (and leaks whatever directory the demo was run from).
+    """
     return (
         "{\n"
         '  "mcpServers": {\n'
         '    "labgrid": {\n'
-        '      "command": "uv",\n'
-        f'      "args": ["run", "--directory", "{directory}", "labgrid-mcp"],\n'
+        '      "command": "uvx",\n'
+        '      "args": ["labgrid-mcp"],\n'
         '      "env": {\n'
         f'        "LG_COORDINATOR": "127.0.0.1:{port}"\n'
         "      }\n"

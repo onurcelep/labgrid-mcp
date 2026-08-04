@@ -92,6 +92,11 @@ def test_render_banner_contains_coordinator_address_and_prompts() -> None:
     assert "127.0.0.1:20499" in banner
     assert '"LG_COORDINATOR": "127.0.0.1:20499"' in banner
     assert '"mcpServers"' in banner
+    # The snippet must be the install-agnostic uvx form -- a
+    # `uv run --directory <cwd>` snippet only works from a source checkout
+    # and leaks the invoking directory.
+    assert '"command": "uvx"' in banner
+    assert "--directory" not in banner
     assert demo.PLACE_NAME in banner
     assert "acquire demo-place" in banner
     assert "Ctrl-C" in banner
