@@ -9,7 +9,7 @@ authors = [{ name = "Onur Celep" }]
 dependencies = [
     "mcp>=1.2,<2",
     "labgrid>=26.0,<27",
-    "grpcio>=1.60",
+    "grpcio>=1.60,<2",
 ]
 
 [project.scripts]
