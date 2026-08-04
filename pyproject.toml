@@ -1,13 +1,13 @@
 [project]
 name = "labgrid-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "MCP server exposing labgrid hardware-in-the-loop device operations to LLM agents"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [{ name = "Onur Celep" }]
 dependencies = [
-    "mcp>=1.2",
+    "mcp>=1.2,<2",
     "labgrid>=26.0,<27",
     "grpcio>=1.60",
 ]

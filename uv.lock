@@ -504,7 +504,7 @@ wheels = [
 
 [[package]]
 name = "labgrid-mcp"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "grpcio" },
@@ -524,7 +524,7 @@ dev = [
 requires-dist = [
     { name = "grpcio", specifier = ">=1.60" },
     { name = "labgrid", specifier = ">=26.0,<27" },
-    { name = "mcp", specifier = ">=1.2" },
+    { name = "mcp", specifier = ">=1.2,<2" },
 ]
 
 [package.metadata.requires-dev]
