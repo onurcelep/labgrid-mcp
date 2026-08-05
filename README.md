@@ -55,7 +55,7 @@ uvx labgrid-mcp demo
 This boots a complete **fake lab** on your machine: a real labgrid
 coordinator and exporter, one demo board with a fake power switch and a fake
 serial console. It prints a paste-ready `.mcp.json` snippet. Then ask
-Claude:
+your agent:
 
 > - "List places, then acquire demo-place"
 > - "Power demo-place on and read its power state"
@@ -72,7 +72,15 @@ time it runs. (Prefer pip? `pip install labgrid-mcp`, then use
 You need a running, **gRPC-era labgrid coordinator** (labgrid ≥ 24; tested
 against 26.x) reachable from this machine.
 
-**1. Register the server with your MCP client.**
+**1. Register the server with your MCP client.** The server definition is the
+same everywhere — command `uvx`, args `["labgrid-mcp"]`, plus your `LG_*` env
+vars — only the config file location and top-level key differ. Pick your
+client:
+
+<details>
+<summary><b>Claude Code</b></summary>
+
+Save as `.mcp.json` in your project root:
 
 ```json
 {
@@ -80,20 +88,102 @@ against 26.x) reachable from this machine.
     "labgrid": {
       "command": "uvx",
       "args": ["labgrid-mcp"],
-      "env": {
-        "LG_COORDINATOR": "your-coordinator-host:20408"
-      }
+      "env": { "LG_COORDINATOR": "your-coordinator-host:20408" }
     }
   }
 }
 ```
 
-- **Claude Code** — save this as `.mcp.json` in your project root, or run:
-  ```bash
-  claude mcp add labgrid --env LG_COORDINATOR=your-coordinator-host:20408 -- uvx labgrid-mcp
-  ```
-- **Claude Desktop** — add the `labgrid` block under `mcpServers` in
-  `claude_desktop_config.json` (Settings → Developer → Edit Config).
+or one command: `claude mcp add labgrid --env LG_COORDINATOR=your-coordinator-host:20408 -- uvx labgrid-mcp`
+
+</details>
+
+<details>
+<summary><b>Claude Desktop</b></summary>
+
+Settings → Developer → Edit Config, then add under `mcpServers` in
+`claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "labgrid": {
+      "command": "uvx",
+      "args": ["labgrid-mcp"],
+      "env": { "LG_COORDINATOR": "your-coordinator-host:20408" }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Cursor</b></summary>
+
+Save as `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
+
+```json
+{
+  "mcpServers": {
+    "labgrid": {
+      "command": "uvx",
+      "args": ["labgrid-mcp"],
+      "env": { "LG_COORDINATOR": "your-coordinator-host:20408" }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>VS Code (Copilot)</b></summary>
+
+Save as `.vscode/mcp.json` — note VS Code uses a `servers` key:
+
+```json
+{
+  "servers": {
+    "labgrid": {
+      "command": "uvx",
+      "args": ["labgrid-mcp"],
+      "env": { "LG_COORDINATOR": "your-coordinator-host:20408" }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Windsurf</b></summary>
+
+Add under `mcpServers` in `~/.codeium/windsurf/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "labgrid": {
+      "command": "uvx",
+      "args": ["labgrid-mcp"],
+      "env": { "LG_COORDINATOR": "your-coordinator-host:20408" }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Any other MCP client / SDK</b></summary>
+
+labgrid-mcp is a standard stdio MCP server: spawn `uvx labgrid-mcp` (or
+`labgrid-mcp` after `pip install labgrid-mcp`) with `LG_COORDINATOR` set in
+its environment, and speak MCP over stdin/stdout. Works with any client or
+agent SDK that supports stdio servers.
+
+</details>
 
 **2. Restart the client** so it picks up the new server.
 
@@ -106,6 +196,48 @@ delegated to the network (VPN / SSH tunnel), same as `labgrid-client`.
 
 *(Running from a clone instead of PyPI? Use `"command": "uv"`,
 `"args": ["run", "--directory", "/path/to/labgrid-mcp", "labgrid-mcp"]`.)*
+
+### Run with Docker
+
+Prefer a container (locked-down host, or running the server on a machine
+inside the lab network)? A prebuilt image is published on every release:
+
+```json
+{
+  "mcpServers": {
+    "labgrid": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm",
+               "-e", "LG_COORDINATOR=your-coordinator-host:20408",
+               "ghcr.io/onurcelep/labgrid-mcp"]
+    }
+  }
+}
+```
+
+A useful pattern for labs: run the container **on a host inside the lab
+network** while your MCP client runs anywhere, one container per user so
+identity and ownership stay per-person:
+
+```json
+{
+  "mcpServers": {
+    "labgrid": {
+      "command": "ssh",
+      "args": ["labhost", "docker", "run", "-i", "--rm",
+               "-e", "LG_COORDINATOR=127.0.0.1:20408",
+               "-e", "LG_USERNAME=your-name",
+               "ghcr.io/onurcelep/labgrid-mcp"]
+    }
+  }
+}
+```
+
+Don't share one running server between users: each instance holds a single
+labgrid identity, so a shared instance would make everyone's acquisitions
+indistinguishable. One container per user/agent keeps the lab's ownership
+model intact. (Note: unlike the PyPI wheel, the image bundles labgrid,
+LGPL-2.1-or-later — its license texts ship inside the image.)
 
 ### Your first session
 
