@@ -9,10 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Docker support**: a prebuilt image is published to
-  `ghcr.io/onurcelep/labgrid-mcp` on every release tag; README documents
-  container usage including the per-user central-host pattern (one container
-  per user so labgrid identity and ownership stay per-person).
+- **Docker support**: README documents building the image from the repo's
+  `Dockerfile` and container usage, including the per-user central-host
+  pattern (one container per user so labgrid identity and ownership stay
+  per-person). Images are built by users, not distributed by the project.
 - README: client-specific setup instructions (Claude Code, Claude Desktop,
   Cursor, VS Code, Windsurf, generic stdio) as collapsible sections.
 
