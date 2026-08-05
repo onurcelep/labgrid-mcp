@@ -202,8 +202,10 @@ delegated to the network (VPN / SSH tunnel), same as `labgrid-client`.
 
 ### Run with Docker
 
-Prefer a container (locked-down host, or running the server on a machine
-inside the lab network)? Build the image from the repo's `Dockerfile`:
+<details>
+<summary><b>Build and run the server as a container</b> (locked-down hosts, or hosting it inside the lab network)</summary>
+
+Build the image from the repo's `Dockerfile`:
 
 ```bash
 git clone https://github.com/onurcelep/labgrid-mcp && cd labgrid-mcp
@@ -250,6 +252,8 @@ model intact. (Note: an image you build bundles labgrid,
 LGPL-2.1-or-later — fine to use anywhere; if you *redistribute* the image,
 the LGPL's terms apply to that copy, with labgrid's license texts already
 inside it.)
+
+</details>
 
 ### Your first session
 
@@ -327,6 +331,9 @@ description (visible in your MCP client) and in
 
 ## Development
 
+<details>
+<summary><b>Working on labgrid-mcp itself</b></summary>
+
 The integration suite runs the whole stack, including the demo, against
 real coordinator/exporter processes with fake hardware, in CI on every PR,
 plus a weekly canary against labgrid `master`:
@@ -340,6 +347,8 @@ uv run pytest -m integration
 
 Architecture, decision log, and a verified reference of labgrid's
 internals: [`docs/DESIGN.md`](docs/DESIGN.md).
+
+</details>
 
 ## License
 
