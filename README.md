@@ -203,7 +203,14 @@ delegated to the network (VPN / SSH tunnel), same as `labgrid-client`.
 ### Run with Docker
 
 Prefer a container (locked-down host, or running the server on a machine
-inside the lab network)? A prebuilt image is published on every release:
+inside the lab network)? Build the image from the repo's `Dockerfile`:
+
+```bash
+git clone https://github.com/onurcelep/labgrid-mcp && cd labgrid-mcp
+docker build -t labgrid-mcp .
+```
+
+Then point your MCP client at it:
 
 ```json
 {
@@ -212,15 +219,15 @@ inside the lab network)? A prebuilt image is published on every release:
       "command": "docker",
       "args": ["run", "-i", "--rm",
                "-e", "LG_COORDINATOR=your-coordinator-host:20408",
-               "ghcr.io/onurcelep/labgrid-mcp"]
+               "labgrid-mcp"]
     }
   }
 }
 ```
 
-A useful pattern for labs: run the container **on a host inside the lab
-network** while your MCP client runs anywhere, one container per user so
-identity and ownership stay per-person:
+A useful pattern for labs: build and run the container **on a host inside
+the lab network** while your MCP client runs anywhere, one container per
+user so identity and ownership stay per-person:
 
 ```json
 {
@@ -230,7 +237,7 @@ identity and ownership stay per-person:
       "args": ["labhost", "docker", "run", "-i", "--rm",
                "-e", "LG_COORDINATOR=127.0.0.1:20408",
                "-e", "LG_USERNAME=your-name",
-               "ghcr.io/onurcelep/labgrid-mcp"]
+               "labgrid-mcp"]
     }
   }
 }
@@ -239,8 +246,10 @@ identity and ownership stay per-person:
 Don't share one running server between users: each instance holds a single
 labgrid identity, so a shared instance would make everyone's acquisitions
 indistinguishable. One container per user/agent keeps the lab's ownership
-model intact. (Note: unlike the PyPI wheel, the image bundles labgrid,
-LGPL-2.1-or-later — its license texts ship inside the image.)
+model intact. (Note: an image you build bundles labgrid,
+LGPL-2.1-or-later — fine to use anywhere; if you *redistribute* the image,
+the LGPL's terms apply to that copy, with labgrid's license texts already
+inside it.)
 
 ### Your first session
 
