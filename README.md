@@ -107,6 +107,22 @@ delegated to the network (VPN / SSH tunnel), same as `labgrid-client`.
 *(Running from a clone instead of PyPI? Use `"command": "uv"`,
 `"args": ["run", "--directory", "/path/to/labgrid-mcp", "labgrid-mcp"]`.)*
 
+### Your first session
+
+Just ask in plain language — the agent maps it to the right tools. A typical
+first workflow:
+
+> - "Which places are free right now?"
+> - "Acquire board-7 for me."
+> - "Power it on, then open the serial console and show me the boot output."
+> - "SSH in and run `uname -a`."
+> - "Power it off and release the board."
+
+Read-only asks ("list places", "who's holding board-7?") work immediately.
+Anything that changes hardware state is gated (see below), and the two
+irreversible families — **flashing** and **place deletion** — stay off until
+you explicitly enable them.
+
 ## Configuration
 
 | Env var | Default | Effect |
