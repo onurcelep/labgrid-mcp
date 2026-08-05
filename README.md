@@ -1,5 +1,8 @@
 # labgrid-mcp
 
+[![PyPI](https://img.shields.io/pypi/v/labgrid-mcp)](https://pypi.org/project/labgrid-mcp/)
+[![labgrid-mcp MCP server](https://glama.ai/mcp/servers/onurcelep/labgrid-mcp/badges/score.svg)](https://glama.ai/mcp/servers/onurcelep/labgrid-mcp)
+
 **Drive real embedded hardware from Claude, AI editors, and any MCP client.**
 
 [labgrid](https://github.com/labgrid-project/labgrid) is the open-source
