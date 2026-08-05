@@ -18,6 +18,14 @@ policy-gated remote-control surface over labgrid's mature driver ecosystem,
 with the reservations and ownership arbitration ad-hoc device servers don't
 have.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/onurcelep/labgrid-mcp/main/docs/media/demo.gif"
+       alt="Claude acquiring a board, powering it on, reading its serial console, then powering off and releasing it — all against the built-in demo lab"
+       width="900">
+</p>
+
+<p align="center"><em>Claude driving the built-in demo lab — no hardware, one command: <code>uvx labgrid-mcp demo</code></em></p>
+
 ## Features
 
 - **Full device lifecycle**: discover, reserve, acquire, release;
