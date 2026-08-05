@@ -65,8 +65,14 @@ Ctrl-C tears everything down.
 
 ## Connect your lab
 
-Needs a gRPC-era coordinator (labgrid ≥ 24; tested against 26.x). Add to
-`.mcp.json` (Claude Code) or Claude Desktop's config:
+**No separate install step** — `uvx` fetches `labgrid-mcp` from PyPI the first
+time it runs. (Prefer pip? `pip install labgrid-mcp`, then use
+`"command": "labgrid-mcp"` with no `args` below.)
+
+You need a running, **gRPC-era labgrid coordinator** (labgrid ≥ 24; tested
+against 26.x) reachable from this machine.
+
+**1. Register the server with your MCP client.**
 
 ```json
 {
@@ -75,18 +81,31 @@ Needs a gRPC-era coordinator (labgrid ≥ 24; tested against 26.x). Add to
       "command": "uvx",
       "args": ["labgrid-mcp"],
       "env": {
-        "LG_COORDINATOR": "127.0.0.1:20408"
+        "LG_COORDINATOR": "your-coordinator-host:20408"
       }
     }
   }
 }
 ```
 
-(Running from a clone instead? Use `"command": "uv"`,
-`"args": ["run", "--directory", "/path/to/labgrid-mcp", "labgrid-mcp"]`.)
+- **Claude Code** — save this as `.mcp.json` in your project root, or run:
+  ```bash
+  claude mcp add labgrid --env LG_COORDINATOR=your-coordinator-host:20408 -- uvx labgrid-mcp
+  ```
+- **Claude Desktop** — add the `labgrid` block under `mcpServers` in
+  `claude_desktop_config.json` (Settings → Developer → Edit Config).
+
+**2. Restart the client** so it picks up the new server.
+
+**3. Confirm it's connected** — ask your agent *"List the labgrid places"*; you
+should get your lab's boards back. You're ready.
 
 Identity works exactly like `labgrid-client`: set `LG_HOSTNAME` /
-`LG_USERNAME`, or omit them to use your real hostname/user.
+`LG_USERNAME`, or omit them to use your real hostname/user. Security is
+delegated to the network (VPN / SSH tunnel), same as `labgrid-client`.
+
+*(Running from a clone instead of PyPI? Use `"command": "uv"`,
+`"args": ["run", "--directory", "/path/to/labgrid-mcp", "labgrid-mcp"]`.)*
 
 ## Configuration
 
