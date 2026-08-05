@@ -426,11 +426,11 @@ def render_banner(port: int) -> str:
         "  power        fake HTTP switch  -- independent fake\n"
         "  console      fake TCP bridge   -- independent fake, banner + line echo\n"
         "\n"
-        "Paste into .mcp.json (or Claude Desktop's config):\n"
+        "Paste into your MCP client's config (e.g. .mcp.json):\n"
         "\n"
         f"{_mcp_snippet(port)}\n"
         "\n"
-        "Try asking Claude:\n"
+        "Try asking your agent:\n"
         f'  - "List places, then acquire {PLACE_NAME}"\n'
         f'  - "Power {PLACE_NAME} on and read its power state"\n'
         f'  - "Open the console on {PLACE_NAME} and read its output"\n'

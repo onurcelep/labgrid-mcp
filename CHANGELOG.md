@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Docker support**: a prebuilt image is published to
+  `ghcr.io/onurcelep/labgrid-mcp` on every release tag; README documents
+  container usage including the per-user central-host pattern (one container
+  per user so labgrid identity and ownership stay per-person).
+- README: client-specific setup instructions (Claude Code, Claude Desktop,
+  Cursor, VS Code, Windsurf, generic stdio) as collapsible sections.
+
+### Changed
+
+- The demo banner now speaks to any MCP client ("Try asking your agent")
+  instead of naming a specific one.
+
 ## [0.1.2] - 2026-08-04
 
 ### Fixed
