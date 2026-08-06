@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import shutil
 import socket
+import subprocess
+import threading
 from contextlib import closing
 from unittest.mock import MagicMock
 
@@ -135,3 +137,67 @@ def test_find_script_found_returns_path(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
 
     assert demo._find_script("labgrid-exporter") == "/usr/bin/labgrid-exporter"
+
+
+def test_parse_acquired() -> None:
+    free = "Place 'demo-place':\n  matches:\n    x/y/z\n  acquired: None\n"
+    held = "Place 'demo-place':\n  acquired: claude/agent\n  acquired resources:\n"
+    assert demo._parse_acquired(free) is None
+    assert demo._parse_acquired(held) == "claude/agent"
+    assert demo._parse_acquired("") is None
+    assert demo._parse_acquired("garbage\nwithout the field\n") is None
+
+
+def test_watch_ownership_narrates_transitions(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One line per transition: free->held prints acquired, held->free prints
+    released, and steady state prints nothing."""
+    stop = threading.Event()
+    outputs = iter(
+        [
+            "  acquired: None\n",
+            "  acquired: claude/agent\n",
+            "  acquired: claude/agent\n",
+            "  acquired: None\n",
+        ]
+    )
+
+    class _Proc:
+        def __init__(self, out: str) -> None:
+            self.stdout = out
+
+    def fake_run(*args: object, **kwargs: object) -> _Proc:
+        try:
+            return _Proc(next(outputs))
+        except StopIteration:
+            stop.set()
+            return _Proc("  acquired: None\n")
+
+    # Patch the stdlib modules directly (docs/memory/
+    # mypy-strict-monkeypatch-reexport-trap.md): module singletons mean
+    # demo's own subprocess.run/shutil.which resolve through these objects.
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/labgrid-client")
+
+    class _FastEvent(threading.Event):
+        """wait() returns immediately so each loop tick is instant."""
+
+        def wait(self, timeout: float | None = None) -> bool:
+            return self.is_set()
+
+    fast_stop = _FastEvent()
+
+    def _sync_stop() -> None:
+        while not stop.wait(0.01):
+            pass
+        fast_stop.set()
+
+    t = threading.Thread(target=_sync_stop)
+    t.start()
+    demo._watch_ownership(20499, fast_stop)
+    t.join()
+
+    out = capsys.readouterr().out
+    assert out.count("acquired by claude/agent") == 1
+    assert out.count("released (free)") == 1
