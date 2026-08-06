@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import shutil
 import signal
 import socket
@@ -438,18 +439,66 @@ def render_banner(port: int) -> str:
         "\n"
         "Power state and the console are independent fakes -- toggling one\n"
         "has no effect on the other. Press Ctrl-C to stop.\n"
+        "\n"
+        "Ownership changes are narrated below as your agent acquires and\n"
+        "releases the place.\n"
     )
+
+
+def _parse_acquired(show_output: str) -> str | None:
+    """Extract the holder from ``labgrid-client show`` output, None if free."""
+    for line in show_output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("acquired:"):
+            holder = stripped.split(":", 1)[1].strip()
+            return None if holder in ("None", "") else holder
+    return None
+
+
+def _watch_ownership(port: int, stop_event: threading.Event) -> None:
+    """Narrate ownership changes of the demo place until ``stop_event`` is set.
+
+    Polls ``labgrid-client show`` (an independent observer: labgrid's own
+    client, never this server) and prints one line per transition, so the
+    demo terminal shows the agent acquiring and releasing live. Skips
+    silently if ``labgrid-client`` is unavailable; any transient poll error
+    is ignored and retried on the next tick.
+    """
+    client = shutil.which("labgrid-client")
+    if client is None:
+        return
+    env = {**os.environ, "LG_COORDINATOR": f"127.0.0.1:{port}"}
+    holder: str | None = None
+    while not stop_event.wait(2.0):
+        try:
+            proc = subprocess.run(
+                [client, "-p", PLACE_NAME, "show"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=env,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        new_holder = _parse_acquired(proc.stdout)
+        if new_holder != holder:
+            if new_holder is None:
+                print(f"[watch] {PLACE_NAME} released (free)", flush=True)
+            else:
+                print(f"[watch] {PLACE_NAME} acquired by {new_holder}", flush=True)
+            holder = new_holder
 
 
 def run_demo(port: int) -> None:
     """Entry point for ``labgrid-mcp demo``.
 
     Boots the stack, seeds ``demo-place``, prints the banner, then blocks
-    until SIGINT/SIGTERM, tearing everything down cleanly either way. Raises
-    ``DemoError`` for a clean, user-facing failure (port busy, a missing
-    labgrid console script, or the exporter never coming up) -- ``server.main``
-    turns that into a one-line stderr message and exit code 1, never a
-    traceback.
+    until SIGINT/SIGTERM, tearing everything down cleanly either way; while
+    waiting, a background thread narrates place-ownership changes (see
+    ``_watch_ownership``). Raises ``DemoError`` for a clean, user-facing
+    failure (port busy, a missing labgrid console script, or the exporter
+    never coming up) -- ``server.main`` turns that into a one-line stderr
+    message and exit code 1, never a traceback.
     """
     check_port_available(port)
     stack = start_processes(port)
@@ -458,6 +507,10 @@ def run_demo(port: int) -> None:
         print(render_banner(port), flush=True)
 
         stop_event = threading.Event()
+        watcher = threading.Thread(
+            target=_watch_ownership, args=(port, stop_event), daemon=True
+        )
+        watcher.start()
 
         def _handle_signal(signum: int, frame: FrameType | None) -> None:
             stop_event.set()

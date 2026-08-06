@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-08-06
+
+### Added
+
+- **The demo narrates ownership live**: while `labgrid-mcp demo` runs, it
+  prints one line per place-ownership transition (acquired by whom /
+  released), observed through labgrid's own client, so the demo terminal
+  shows the agent acquiring and releasing in real time.
+
 ## [0.1.3] - 2026-08-05
 
 ### Added
