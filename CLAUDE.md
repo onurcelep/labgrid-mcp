@@ -1,7 +1,7 @@
 # CLAUDE.md — labgrid-mcp
 
 <!-- factory:standard:begin (managed by /factory-update — do not hand-edit) -->
-<!-- factory:version 0.6.9 -->
+<!-- factory:version 0.6.10 -->
 Read by Claude Code locally and by the @claude GitHub Action, so both
 inherit the same rules. Standard setup is stamped by ai-factory
 (`/factory-update` refreshes this block only; everything under `## Project`
