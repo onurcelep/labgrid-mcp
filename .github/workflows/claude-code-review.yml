@@ -57,7 +57,14 @@ jobs:
           # auto PR review; it runs once per PR and depth matters. The floating
           # 'opus' alias (vs a dated pin) is deliberate: the review should track
           # the newest Opus; pin a dated ID only if a regression bites.
-          claude_args: '--model opus'
+          # Allowlist: the reviewer must read the diff (git/grep/wc/cat) and
+          # post its findings through `gh pr review` / `gh pr comment`. With no
+          # allowlist those calls are denied, the review posts nothing, and the
+          # assertion step below turns the run red. `gh api` stays out on
+          # purpose: a prefix allowlist cannot pin an api call to one endpoint,
+          # so allowing it would hand this job the whole write surface of its
+          # token. Trust boundary: docs/SECURITY-MODEL.md (review row).
+          claude_args: '--model opus --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr review:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(grep:*),Bash(wc:*),Bash(cat:*),Bash(head:*),Bash(tail:*)"'
           # The Action does not load the repo's .claude/settings.json (it is
           # stripped from the runner's checkout), so plugins must be
           # self-loaded via these inputs rather than relying on settings.json.
