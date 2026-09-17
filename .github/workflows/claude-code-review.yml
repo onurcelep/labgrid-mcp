@@ -82,16 +82,9 @@ jobs:
           # the factory:repo-memory write path (its YES/NO lists are the criteria):
           # agents under turn pressure skip the memory write first, and nothing
           # else notices the omission.
-          # Posting discipline (added after two real incidents): review runs
-          # completed "successfully" without posting — one ended its turn
-          # "waiting" for spawned subagents (which terminates the run and
-          # orphans them), one finished a full review and simply never
-          # posted. The assert step below turns both into red checks; this
-          # prompt clause is the prevention.
           prompt: |
             /code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }} --comment
             Additionally: if this change clearly reflects a non-obvious, reusable learning by the factory:repo-memory skill's criteria (an environment quirk, a hard-won gotcha, a cross-component contract — not anything derivable from the code or git history) and the PR neither adds nor updates a docs/memory/ fact, report that as a finding. Routine changes must not be flagged.
-            Posting discipline (mandatory): the review is complete ONLY when a review comment is actually posted on the PR. Never end your turn while spawned subagents are still running — ending your turn terminates the run and orphans them; keep working until their results are in. If there are no findings, still post a brief comment saying the review found nothing. Finishing without a posted comment fails this workflow's assert step.
 
       - name: Assert the review was not a silent failure
         id: assert
@@ -110,18 +103,20 @@ jobs:
           CLAUDE_OUTCOME: ${{ steps.claude-review.outcome }}
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          # Self-report: a failing check explains itself on the PR (one marked
+          # Self-report: the check explains itself on the PR (one marked
           # comment, updated in place) so nobody digs through run logs to learn
           # what this step already knew. Reporting is fail-open — a comment
-          # error never masks or replaces the red check.
+          # error never masks or replaces the check's own result. $2 overrides
+          # the heading for outcomes that are not failures.
           report() {
             local body
             body=$(printf '%s\n' \
               '<!-- factory:ci-self-report -->' \
-              '### CI self-report: review check failed' '' "$1" '' \
+              "### CI self-report: ${2:-review check failed}" '' "$1" '' \
               "Run: $RUN_URL — diagnosis order: the factory:ci-agent-ops skill.")
             local cid
             cid=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
@@ -138,12 +133,21 @@ jobs:
               exit 0
             fi
             # Discriminate the two no-log causes: the action's anti-tamper skip
-            # (this PR edits the review workflow file) vs a silent failure.
-            if gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename' 2>/dev/null \
-                | grep -qx '.github/workflows/claude-code-review.yml'; then
-              report "**Expected red — anti-tamper skip.** This PR modifies the review workflow file, so the action refuses to run it (the file must match the default branch). No token problem; the review runs normally on the next PR after this one merges."
-              echo "::error::Anti-tamper skip: this PR edits the review workflow (expected red; see the PR comment)."
-              exit 1
+            # vs a silent failure. The action's rule is "this workflow file
+            # differs from the default branch's copy", which is not the same as
+            # "this PR edited it" (a PR stacked on a branch that edits it
+            # inherits the difference), so compare the files the way the action
+            # does. The skip is the action working as designed, so it reports
+            # green: a red check that means "nothing is wrong" erodes the signal
+            # every other red on this step depends on.
+            DEFAULT_COPY="${RUNNER_TEMP}/claude-code-review.default.yml"
+            if gh api "repos/${GITHUB_REPOSITORY}/contents/.github/workflows/claude-code-review.yml?ref=${DEFAULT_BRANCH}" \
+                 --jq '.content' 2>/dev/null | tr -d '\n' | base64 -d >"$DEFAULT_COPY" 2>/dev/null \
+               && [ -s "$DEFAULT_COPY" ] \
+               && ! cmp -s "$DEFAULT_COPY" .github/workflows/claude-code-review.yml; then
+              report "Review skipped: this PR edits the review workflow, the action refuses to run it until the file matches the default branch. No token problem. A PR stacked on a branch that edits it inherits the same skip; the review runs normally on the next PR after this one merges." "review skipped (anti-tamper)"
+              echo "::notice::Review skipped: this PR edits the review workflow; the action refuses to run it until the file matches the default branch. No token problem."
+              exit 0
             fi
             report "**Silent failure.** The action exited green but wrote no execution log. Retry once (transient API errors share this signature); if it reproduces, suspect CLAUDE_CODE_OAUTH_TOKEN first."
             echo "::error::Silent failure: claude-code-action exited green but wrote no execution log. See the PR comment."
