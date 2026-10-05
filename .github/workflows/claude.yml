@@ -57,7 +57,7 @@ jobs:
           # Model policy: see the factory:model-routing skill. Sonnet for
           # responder work, turn-capped. Escalate per-issue by writing
           # "use opus" in the issue body if needed.
-          claude_args: '--model claude-sonnet-5 --max-turns 40'
+          claude_args: '--model claude-sonnet-5-5 --max-turns 40'
           # The Action does not load the repo's .claude/settings.json (it is
           # stripped from the runner's checkout), so plugins must be
           # self-loaded via these inputs rather than relying on settings.json.
