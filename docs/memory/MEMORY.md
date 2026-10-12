@@ -10,6 +10,7 @@ rules and conventions: `factory:repo-memory` skill.
 - [labgrid coordinator gRPC quirks](labgrid-coordinator-grpc.md) — coordinator version never reaches clients (null by protocol); keepalive channel options are mandatory or reconnect never fires.
 - [labgrid unary RPCs are session-bound](labgrid-unary-rpcs-session-bound.md) — unary RPCs must ride the ClientStream channel with a live handshake or fail FAILED_PRECONDITION; matters for anything calling acquire/release/reservations.
 - [ResourceEntry.from_pb2 broken in labgrid 26.0](labgrid-resourceentry-frompb2-bug.md) — asserts against Place; use ResourceEntry(ResourceEntry.data_from_pb2(...)) when deserializing resources.
+- [Reservation.token renamed to .id](labgrid-reservation-id-rename.md) — labgrid after 26.0 renamed the wrapper attribute but not the protobuf `token` field; read reservation IDs from the pb2 message only.
 - [ReleasePlace empty-fromuser kick trap](labgrid-release-fromuser-kick-trap.md) — empty fromuser releases unconditionally (no owner check); safe self-release sends fromuser=identity; matters for any release/mutation code.
 - [Shared-subchannel test trap](labgrid-shared-subchannel-test-trap.md) — second client channel from one process to one coordinator aborts with UNKNOWN unless grpc.use_local_subchannel_pool is set; test-only.
 - [RemotePlace self-connect trap](labgrid-remoteplace-selfconnect-trap.md) — pre-seat RemotePlaceManager.session with our adapter before any RemotePlace, or labgrid self-connects and aborts in-process; matters for all Target/driver code.

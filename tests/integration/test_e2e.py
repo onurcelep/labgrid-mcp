@@ -108,8 +108,8 @@ async def _wait_connected(session: ClientSession, port: int) -> None:
     assert address.endswith(f":{port}")
 
 
-async def _reservation_tokens(session: ClientSession) -> set[str]:
-    """Return the set of reservation tokens the coordinator currently holds."""
+async def _reservation_ids(session: ClientSession) -> set[str]:
+    """Return the set of reservation IDs the coordinator currently holds."""
     result = await asyncio.wait_for(
         session.call_tool("list_reservations", {}), timeout=_RPC_TIMEOUT_S
     )
@@ -118,9 +118,9 @@ async def _reservation_tokens(session: ClientSession) -> set[str]:
     reservations = result.structuredContent["reservations"]
     assert isinstance(reservations, list)
     return {
-        r["token"]
+        r["reservation_id"]
         for r in reservations
-        if isinstance(r, dict) and isinstance(r.get("token"), str)
+        if isinstance(r, dict) and isinstance(r.get("reservation_id"), str)
     }
 
 
@@ -422,7 +422,7 @@ async def test_acquire_release_reserve_hardware_free(coordinator: int) -> None:
             assert isinstance(released_place, dict)
             assert released_place.get("acquired") is None
 
-            # reserve -> token visible in list_reservations -> cancel removes it.
+            # reserve -> reservation ID visible in list_reservations -> cancel removes it.
             reserve_result = await asyncio.wait_for(
                 session.call_tool("reserve", {"filters": {"name": _PLACE_NAME}}),
                 timeout=_RPC_TIMEOUT_S,
@@ -431,8 +431,10 @@ async def test_acquire_release_reserve_hardware_free(coordinator: int) -> None:
             assert reserve_result.structuredContent is not None
             reservation = reserve_result.structuredContent["reservation"]
             assert isinstance(reservation, dict)
-            token = reservation.get("token")
-            assert isinstance(token, str) and token
+            reservation_id = reservation.get("reservation_id")
+            assert isinstance(reservation_id, str) and reservation_id
+            # Deprecated alias kept for labgrid-mcp 0.1.x clients.
+            assert reservation.get("token") == reservation_id
 
             list_reservations_result = await asyncio.wait_for(
                 session.call_tool("list_reservations", {}),
@@ -442,11 +444,11 @@ async def test_acquire_release_reserve_hardware_free(coordinator: int) -> None:
             assert list_reservations_result.structuredContent is not None
             reservations = list_reservations_result.structuredContent["reservations"]
             assert isinstance(reservations, list)
-            tokens = {r.get("token") for r in reservations if isinstance(r, dict)}
-            assert token in tokens
+            ids = {r.get("reservation_id") for r in reservations if isinstance(r, dict)}
+            assert reservation_id in ids
 
             cancel_result = await asyncio.wait_for(
-                session.call_tool("cancel_reservation", {"token": token}),
+                session.call_tool("cancel_reservation", {"reservation_id": reservation_id}),
                 timeout=_RPC_TIMEOUT_S,
             )
             assert cancel_result.isError is False
@@ -459,8 +461,8 @@ async def test_acquire_release_reserve_hardware_free(coordinator: int) -> None:
             assert list_reservations_after.structuredContent is not None
             reservations_after = list_reservations_after.structuredContent["reservations"]
             assert isinstance(reservations_after, list)
-            tokens_after = {r.get("token") for r in reservations_after if isinstance(r, dict)}
-            assert token not in tokens_after
+            ids_after = {r.get("reservation_id") for r in reservations_after if isinstance(r, dict)}
+            assert reservation_id not in ids_after
 
             # Foreign-owned place: the fixture client (a distinct identity)
             # acquires it directly, bypassing the MCP session entirely.
@@ -578,7 +580,7 @@ async def test_acquire_waits_for_reservation_then_allocates(coordinator: int) ->
                 # is observable at the coordinator -- proof the acquire really
                 # entered the reserve->poll path -- before releasing.
                 async def _server_reservation_present() -> bool:
-                    return len(await _reservation_tokens(session)) >= 1
+                    return len(await _reservation_ids(session)) >= 1
 
                 await _wait_until(
                     _server_reservation_present,
@@ -613,7 +615,7 @@ async def test_acquire_waits_for_reservation_then_allocates(coordinator: int) ->
 
             # cancel-after-acquire: the server's reservation must be gone.
             async def _reservations_empty() -> bool:
-                return len(await _reservation_tokens(session)) == 0
+                return len(await _reservation_ids(session)) == 0
 
             await _wait_until(
                 _reservations_empty,
@@ -1613,11 +1615,11 @@ async def test_reservation_wait_allocates_free_place(coordinator: int) -> None:
             assert reserve_result.structuredContent is not None
             reservation = reserve_result.structuredContent["reservation"]
             assert isinstance(reservation, dict)
-            token = reservation.get("token")
-            assert isinstance(token, str) and token
+            reservation_id = reservation.get("reservation_id")
+            assert isinstance(reservation_id, str) and reservation_id
 
             wait_result = await asyncio.wait_for(
-                session.call_tool("reservation_wait", {"token": token}),
+                session.call_tool("reservation_wait", {"reservation_id": reservation_id}),
                 timeout=_RPC_TIMEOUT_S,
             )
             assert wait_result.isError is False
@@ -1626,7 +1628,7 @@ async def test_reservation_wait_allocates_free_place(coordinator: int) -> None:
             assert wait_result.structuredContent.get("changed") is True
 
             cancel_result = await asyncio.wait_for(
-                session.call_tool("cancel_reservation", {"token": token}),
+                session.call_tool("cancel_reservation", {"reservation_id": reservation_id}),
                 timeout=_RPC_TIMEOUT_S,
             )
             assert cancel_result.isError is False

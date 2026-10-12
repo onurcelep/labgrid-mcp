@@ -9,4 +9,4 @@ deserialization entry point and breaks only at runtime. How to apply:
 construct with `ResourceEntry(ResourceEntry.data_from_pb2(resource_pb2))` —
 `data_from_pb2` is correct and folds `extra` into `params["extra"]`. Related
 serialization traps (`Place.asdict()` omits `name`, `Reservation.asdict()`
-omits `token`): `docs/DESIGN.md` §11.5.
+omits the reservation ID): `docs/DESIGN.md` §11.5.

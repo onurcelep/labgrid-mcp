@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import grpc
 import grpc.aio
 import pytest
+from labgrid.remote import common
 from labgrid.remote.generated import labgrid_coordinator_pb2 as pb2
 
 from labgrid_mcp import coordinator
@@ -739,7 +740,7 @@ async def test_get_reservations_returns_serialized() -> None:
                 "allocations": {},
                 "created": 1.0,
                 "timeout": 2.0,
-                "token": "TOK123",
+                "reservation_id": "TOK123",
             }
         ]
     finally:
@@ -871,7 +872,7 @@ async def test_create_reservation_happy_builds_main_filter_group() -> None:
     try:
         await client.start()
         data = await client.create_reservation({"name": "board-a", "board": "foo"}, prio=5.0)
-        assert data["token"] == "TOK123"
+        assert data["reservation_id"] == "TOK123"
         assert data["owner"] == "host/user"
         req = stub.last_create_reservation_request
         assert req is not None
@@ -918,7 +919,7 @@ async def test_cancel_reservation_error_wrapped(build_error: Callable[[], Except
         await client.stop()
 
 
-async def test_poll_reservation_happy_returns_serialized_with_token() -> None:
+async def test_poll_reservation_happy_returns_serialized_with_reservation_id() -> None:
     res = pb2.Reservation(
         owner="host/user", token="TOK123", state=2, prio=0.0, created=1.0, timeout=61.0
     )
@@ -927,12 +928,31 @@ async def test_poll_reservation_happy_returns_serialized_with_token() -> None:
     try:
         await client.start()
         data = await client.poll_reservation("TOK123")
-        assert data["token"] == "TOK123"
+        assert data["reservation_id"] == "TOK123"
         assert data["state"] == "acquired"
         assert stub.last_poll_request is not None
         assert stub.last_poll_request.token == "TOK123"
     finally:
         await client.stop()
+
+
+def test_serialize_reservation_does_not_read_wrapper_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # labgrid after 26.0 renamed Reservation.token to .id; the protobuf field
+    # kept the name. A wrapper without ``token`` models the newer labgrid on
+    # any installed version.
+    real_from_pb2 = common.Reservation.from_pb2
+
+    def from_pb2_without_token(pb: Any) -> SimpleNamespace:
+        return SimpleNamespace(asdict=real_from_pb2(pb).asdict)
+
+    monkeypatch.setattr(common.Reservation, "from_pb2", from_pb2_without_token)
+    res = pb2.Reservation(owner="host/user", token="TOK123", state=0, created=1.0, timeout=2.0)
+
+    data = coordinator._serialize_reservation(res)
+
+    assert data["reservation_id"] == "TOK123"
 
 
 @pytest.mark.parametrize("build_error", _ERROR_BUILDERS)

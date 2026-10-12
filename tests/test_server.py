@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import subprocess
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager
@@ -264,17 +265,19 @@ class _StubSession:
             raise self.reserve_value
         return self.reserve_value or {}
 
-    async def cancel_reservation(self, token: str) -> None:
-        self.cancel_calls.append(token)
+    async def cancel_reservation(self, reservation_id: str) -> None:
+        self.cancel_calls.append(reservation_id)
         if self.cancel_error is not None:
             raise self.cancel_error
 
-    async def reservation_wait(self, token: str, timeout_s: float = 25.0) -> dict[str, object]:
-        self.reservation_wait_calls.append((token, timeout_s))
+    async def reservation_wait(
+        self, reservation_id: str, timeout_s: float = 25.0
+    ) -> dict[str, object]:
+        self.reservation_wait_calls.append((reservation_id, timeout_s))
         if isinstance(self.reservation_wait_value, CoordinatorError):
             raise self.reservation_wait_value
         return self.reservation_wait_value or {
-            "token": token,
+            "reservation_id": reservation_id,
             "state": "waiting",
             "allocations": {},
             "changed": False,
@@ -1065,7 +1068,7 @@ async def test_list_resources_tool() -> None:
 async def test_list_reservations_tool() -> None:
     mcp = build_server(
         _config(),
-        _stub(reservations=[{"owner": "h/u", "token": "T"}]),
+        _stub(reservations=[{"owner": "h/u", "reservation_id": "T"}]),
         _session(),
         _targets(),
         _stub_consoles(),
@@ -1075,7 +1078,8 @@ async def test_list_reservations_tool() -> None:
 
     _content, structured = await _call_tool(mcp, "list_reservations", {})
 
-    assert structured == {"reservations": [{"owner": "h/u", "token": "T"}]}
+    # ``token`` is the deprecated alias of ``reservation_id`` (labgrid-mcp <= 0.1.x).
+    assert structured == {"reservations": [{"owner": "h/u", "reservation_id": "T", "token": "T"}]}
 
 
 async def test_list_reservations_not_connected() -> None:
@@ -1113,7 +1117,7 @@ async def test_resources_resource() -> None:
 async def test_reservations_resource() -> None:
     mcp = build_server(
         _config(),
-        _stub(reservations=[{"owner": "h/u", "token": "T"}]),
+        _stub(reservations=[{"owner": "h/u", "reservation_id": "T"}]),
         _session(),
         _targets(),
         _stub_consoles(),
@@ -1124,7 +1128,9 @@ async def test_reservations_resource() -> None:
     contents = list(await mcp.read_resource("labgrid://reservations"))
 
     assert len(contents) == 1
-    assert json.loads(contents[0].content) == [{"owner": "h/u", "token": "T"}]
+    assert json.loads(contents[0].content) == [
+        {"owner": "h/u", "reservation_id": "T", "token": "T"}
+    ]
 
 
 async def test_reservations_resource_not_connected() -> None:
@@ -1420,7 +1426,7 @@ async def test_reserve_tool() -> None:
     mcp = build_server(
         _config(),
         _stub(),
-        _session(reserve_value={"token": "T1", "state": "waiting"}),
+        _session(reserve_value={"reservation_id": "T1", "state": "waiting"}),
         _targets(),
         _stub_consoles(),
         _stub_jobs(),
@@ -1429,7 +1435,9 @@ async def test_reserve_tool() -> None:
 
     _content, structured = await _call_tool(mcp, "reserve", {"filters": {"name": "p1"}})
 
-    assert structured == {"reservation": {"token": "T1", "state": "waiting"}}
+    assert structured == {
+        "reservation": {"reservation_id": "T1", "token": "T1", "state": "waiting"}
+    }
 
 
 async def test_reserve_tool_error() -> None:
@@ -1452,9 +1460,88 @@ async def test_cancel_reservation_tool() -> None:
         _config(), _stub(), _session(), _targets(), _stub_consoles(), _stub_jobs(), _stub_forwards()
     )
 
+    _content, structured = await _call_tool(mcp, "cancel_reservation", {"reservation_id": "T1"})
+
+    assert structured == {"cancelled": "T1"}
+
+
+async def test_cancel_reservation_tool_accepts_deprecated_token() -> None:
+    session = _session()
+    mcp = build_server(
+        _config(), _stub(), session, _targets(), _stub_consoles(), _stub_jobs(), _stub_forwards()
+    )
+
     _content, structured = await _call_tool(mcp, "cancel_reservation", {"token": "T1"})
 
     assert structured == {"cancelled": "T1"}
+    assert session.cancel_calls == ["T1"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [{"reservation_id": "T1", "token": ""}, {"reservation_id": "", "token": "T1"}],
+)
+async def test_cancel_reservation_tool_treats_empty_argument_as_absent(
+    args: dict[str, str],
+) -> None:
+    session = _session()
+    mcp = build_server(
+        _config(), _stub(), session, _targets(), _stub_consoles(), _stub_jobs(), _stub_forwards()
+    )
+
+    await _call_tool(mcp, "cancel_reservation", args)
+
+    assert session.cancel_calls == ["T1"]
+
+
+async def test_deprecated_token_warning_logged_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(server_module, "_token_deprecation_logged", False)
+    mcp = build_server(
+        _config(), _stub(), _session(), _targets(), _stub_consoles(), _stub_jobs(), _stub_forwards()
+    )
+
+    with caplog.at_level(logging.WARNING, logger="labgrid_mcp.server"):
+        await _call_tool(mcp, "reservation_wait", {"token": "T1"})
+        await _call_tool(mcp, "reservation_wait", {"token": "T1"})
+
+    assert [r.getMessage() for r in caplog.records].count(
+        "tool argument 'token' is deprecated; use 'reservation_id'"
+    ) == 1
+
+
+async def test_cancel_reservation_tool_accepts_matching_id_and_token() -> None:
+    session = _session()
+    mcp = build_server(
+        _config(), _stub(), session, _targets(), _stub_consoles(), _stub_jobs(), _stub_forwards()
+    )
+
+    await _call_tool(mcp, "cancel_reservation", {"reservation_id": "T1", "token": "T1"})
+
+    assert session.cancel_calls == ["T1"]
+
+
+@pytest.mark.parametrize(
+    ("args", "match"),
+    [
+        ({}, "reservation_id is required"),
+        ({"reservation_id": "", "token": ""}, "reservation_id is required"),
+        ({"reservation_id": "T1", "token": "T2"}, "conflicting"),
+    ],
+)
+async def test_cancel_reservation_tool_rejects_missing_or_conflicting_id(
+    args: dict[str, str], match: str
+) -> None:
+    session = _session()
+    mcp = build_server(
+        _config(), _stub(), session, _targets(), _stub_consoles(), _stub_jobs(), _stub_forwards()
+    )
+
+    with pytest.raises(ToolError, match=match):
+        await _call_tool(mcp, "cancel_reservation", args)
+
+    assert session.cancel_calls == []
 
 
 async def test_cancel_reservation_tool_error() -> None:
@@ -1469,7 +1556,7 @@ async def test_cancel_reservation_tool_error() -> None:
     )
 
     with pytest.raises(ToolError, match="reservation gone"):
-        await _call_tool(mcp, "cancel_reservation", {"token": "T1"})
+        await _call_tool(mcp, "cancel_reservation", {"reservation_id": "T1"})
 
 
 async def test_reservation_tools_annotations() -> None:
@@ -1498,7 +1585,7 @@ async def test_reservation_tools_annotations() -> None:
 async def test_reservation_wait_tool() -> None:
     session = _session(
         reservation_wait_value={
-            "token": "T1",
+            "reservation_id": "T1",
             "state": "allocated",
             "allocations": {"main": ["p1"]},
             "changed": True,
@@ -1508,9 +1595,10 @@ async def test_reservation_wait_tool() -> None:
         _config(), _stub(), session, _targets(), _stub_consoles(), _stub_jobs(), _stub_forwards()
     )
 
-    _content, structured = await _call_tool(mcp, "reservation_wait", {"token": "T1"})
+    _content, structured = await _call_tool(mcp, "reservation_wait", {"reservation_id": "T1"})
 
     assert structured == {
+        "reservation_id": "T1",
         "token": "T1",
         "state": "allocated",
         "allocations": {"main": ["p1"]},
@@ -1519,13 +1607,61 @@ async def test_reservation_wait_tool() -> None:
     assert session.reservation_wait_calls == [("T1", 25.0)]
 
 
+async def test_reservation_wait_tool_accepts_deprecated_token() -> None:
+    session = _session()
+    mcp = build_server(
+        _config(), _stub(), session, _targets(), _stub_consoles(), _stub_jobs(), _stub_forwards()
+    )
+
+    _content, structured = await _call_tool(mcp, "reservation_wait", {"token": "T1"})
+
+    assert structured is not None
+    assert structured["reservation_id"] == "T1"
+    assert structured["token"] == "T1"
+    assert session.reservation_wait_calls == [("T1", 25.0)]
+
+
+@pytest.mark.parametrize(
+    ("args", "match"),
+    [
+        ({}, "reservation_id is required"),
+        ({"reservation_id": "T1", "token": "T2"}, "conflicting"),
+    ],
+)
+async def test_reservation_wait_tool_rejects_missing_or_conflicting_id(
+    args: dict[str, str], match: str
+) -> None:
+    session = _session()
+    mcp = build_server(
+        _config(), _stub(), session, _targets(), _stub_consoles(), _stub_jobs(), _stub_forwards()
+    )
+
+    with pytest.raises(ToolError, match=match):
+        await _call_tool(mcp, "reservation_wait", args)
+
+    assert session.reservation_wait_calls == []
+
+
+async def test_reservation_tools_mark_token_param_deprecated() -> None:
+    mcp = build_server(
+        _config(), _stub(), _session(), _targets(), _stub_consoles(), _stub_jobs(), _stub_forwards()
+    )
+
+    tools = {t.name: t for t in await mcp.list_tools()}
+
+    for name in ("cancel_reservation", "reservation_wait"):
+        props = tools[name].inputSchema["properties"]
+        assert "reservation_id" in props
+        assert props["token"].get("deprecated") is True
+
+
 async def test_reservation_wait_forwards_explicit_timeout() -> None:
     session = _session()
     mcp = build_server(
         _config(), _stub(), session, _targets(), _stub_consoles(), _stub_jobs(), _stub_forwards()
     )
 
-    await _call_tool(mcp, "reservation_wait", {"token": "T1", "timeout_s": 5.0})
+    await _call_tool(mcp, "reservation_wait", {"reservation_id": "T1", "timeout_s": 5.0})
 
     assert session.reservation_wait_calls == [("T1", 5.0)]
 
@@ -1542,7 +1678,7 @@ async def test_reservation_wait_tool_error() -> None:
     )
 
     with pytest.raises(ToolError, match="not connected"):
-        await _call_tool(mcp, "reservation_wait", {"token": "T1"})
+        await _call_tool(mcp, "reservation_wait", {"reservation_id": "T1"})
 
 
 async def test_reservation_wait_is_non_destructive_non_idempotent_annotated() -> None:

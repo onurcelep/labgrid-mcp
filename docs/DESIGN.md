@@ -453,8 +453,8 @@ Unary RPCs and their exact request fields → response fields:
 | `ReleasePlace` | `placename`, `fromuser` | (empty) |
 | `AllowPlace` | `placename`, `user` | (empty) |
 | `CreateReservation` | `filters` (map name→Filter), `prio` (double) | `Reservation reservation` |
-| `CancelReservation` | `token` | (empty) |
-| `PollReservation` | `token` | `Reservation reservation` |
+| `CancelReservation` | `token` (the reservation ID) | (empty) |
+| `PollReservation` | `token` (the reservation ID) | `Reservation reservation` |
 | `GetReservations` | (empty) | `repeated Reservation reservations` |
 | `AddPlace`/`DeletePlace`/`AddPlaceAlias`/`DeletePlaceAlias`/`SetPlaceTags`/`SetPlaceComment`/`AddPlaceMatch`/`DeletePlaceMatch` | (place metadata) | (empty) |
 
@@ -508,8 +508,15 @@ the server's `details` string kept):
   server adds it explicitly (as labgrid's own client does:
   `data["name"] = place.name`).
 - `Reservation.from_pb2(pb2)` is correct; `Reservation.asdict()` → dict with
-  `state` as the enum *name* string; **omits `token`** — the server adds it
-  explicitly from `.token` when returning reservations to agents.
+  `state` as the enum *name* string; **omits the reservation ID** — the server
+  adds it explicitly as `reservation_id`, read from the protobuf `token`
+  field. Never read it from the wrapper object: labgrid after 26.0 renamed the
+  attribute `Reservation.token` to `Reservation.id` (and `LG_TOKEN` to
+  `LG_RESERVATION`), while the wire field kept the name `token`.
+- The reservation tools expose `reservation_id`. The 0.1.x name `token` is a
+  deprecated alias at the tool boundary only (`server.py`): payloads carry
+  both keys, and `cancel_reservation`/`reservation_wait` accept either
+  argument but refuse conflicting values. The alias is removed in 0.3.0.
 - `ReservationState`: `waiting/allocated/acquired/expired/invalid`.
 - **`ResourceEntry.from_pb2` is buggy in labgrid 26.0** — its assert checks
   `isinstance(pb2, …Place)` (copy-paste bug), so it raises `AssertionError`
@@ -640,9 +647,9 @@ to the creator — any client sees/uses them until deleted):
 
 **Other acquisition traps:**
 
-- `CreateReservationResponse.reservation.token` is the handle for
-  poll/cancel/acquire-guard; `Reservation.asdict()` omits it (§11.5) — add it
-  explicitly.
+- `CreateReservationResponse.reservation.token` (the reservation ID) is the
+  handle for poll/cancel/acquire-guard; `Reservation.asdict()` omits it
+  (§11.5) — add it explicitly.
 - Two client channels to the same target share a gRPC subchannel by default →
   the coordinator's `assert peer not in self.clients` (`coordinator.py:317`)
   aborts the second with `UNKNOWN`. Only relevant to multi-client *tests*,

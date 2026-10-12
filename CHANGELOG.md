@@ -5,6 +5,31 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Reservation `token` is now `reservation_id`**, following labgrid's own
+  rename of reservation tokens to reservation IDs. `reserve`,
+  `list_reservations`, `reservation_wait` and the `labgrid://reservations`
+  resource return `reservation_id`; `cancel_reservation` and
+  `reservation_wait` take a `reservation_id` argument.
+
+### Deprecated
+
+- The `token` name. Reservation payloads still carry a `token` key equal to
+  `reservation_id`, and `cancel_reservation`/`reservation_wait` still accept
+  a `token` argument (refused if it conflicts with `reservation_id`). Both
+  will be removed in 0.3.0.
+
+### Fixed
+
+- Reservation tools no longer fail with
+  `'Reservation' object has no attribute 'token'` on labgrid releases after
+  26.0, which renamed the attribute to `id`. labgrid-mcp 0.1.4 and earlier
+  are affected: their `labgrid>=26.0,<27` range admits those releases, so
+  upgrade labgrid-mcp before (or together with) labgrid.
+
 ## [0.1.4] - 2026-08-06
 
 ### Added

@@ -37,7 +37,7 @@ class FakeClient:
         self.identity = identity
         self._places: dict[str, dict[str, object]] = {}
         self.calls: list[tuple[Any, ...]] = []
-        self.token = "TOK123"
+        self.reservation_id = "TOK123"
         self.create_state = "waiting"
         # Queue of reservation states returned by successive poll calls; the
         # last one sticks once exhausted.
@@ -95,15 +95,15 @@ class FakeClient:
         self.calls.append(("create", dict(filters), prio))
         return {
             "state": self.create_state,
-            "token": self.token,
+            "reservation_id": self.reservation_id,
             "allocations": {},
         }
 
-    async def cancel_reservation_rpc(self, token: str) -> None:
-        self.calls.append(("cancel", token))
+    async def cancel_reservation_rpc(self, reservation_id: str) -> None:
+        self.calls.append(("cancel", reservation_id))
 
-    async def poll_reservation(self, token: str) -> dict[str, object]:
-        self.calls.append(("poll", token))
+    async def poll_reservation(self, reservation_id: str) -> dict[str, object]:
+        self.calls.append(("poll", reservation_id))
         if self._poll_idx < len(self.poll_states):
             state = self.poll_states[self._poll_idx]
             self._poll_idx += 1
@@ -112,7 +112,7 @@ class FakeClient:
         else:
             state = "waiting"
         allocations = self.poll_allocations if state == "allocated" else {}
-        return {"state": state, "token": token, "allocations": allocations}
+        return {"state": state, "reservation_id": reservation_id, "allocations": allocations}
 
     # helpers ------------------------------------------------------------
     def call_kinds(self) -> list[Any]:
@@ -182,7 +182,7 @@ async def test_acquire_taken_place_reserves_then_acquires(
     assert kinds.index("acquire") > kinds.index("poll")
     assert kinds.index("cancel") > kinds.index("acquire")
     assert kinds.count("poll") == 2
-    assert ("cancel", client.token) in client.calls
+    assert ("cancel", client.reservation_id) in client.calls
     assert result["acquired"] == IDENTITY
 
 
@@ -191,7 +191,7 @@ async def test_acquire_allocated_on_create_skips_poll(
 ) -> None:
     monkeypatch.setattr(session_mod, "_sleep", _instant_sleep)
     client = FakeClient()
-    client.set_place("board", reservation="someone-elses-token")
+    client.set_place("board", reservation="someone-elses-reservation")
     client.create_state = "allocated"
     session = make_session(client)
     # create_reservation returns allocated but with our place in allocations
@@ -199,7 +199,11 @@ async def test_acquire_allocated_on_create_skips_poll(
 
     async def create_allocated(filters: dict[str, str], prio: float = 0.0) -> dict[str, object]:
         await orig_create(filters, prio)
-        return {"state": "allocated", "token": client.token, "allocations": {"main": ["board"]}}
+        return {
+            "state": "allocated",
+            "reservation_id": client.reservation_id,
+            "allocations": {"main": ["board"]},
+        }
 
     monkeypatch.setattr(client, "create_reservation", create_allocated)
 
@@ -207,7 +211,7 @@ async def test_acquire_allocated_on_create_skips_poll(
 
     assert client.call_kinds().count("poll") == 0
     assert "acquire" in client.call_kinds()
-    assert ("cancel", client.token) in client.calls
+    assert ("cancel", client.reservation_id) in client.calls
 
 
 async def test_acquire_timeout_cancels_reservation_and_raises(
@@ -226,7 +230,7 @@ async def test_acquire_timeout_cancels_reservation_and_raises(
 
     assert "board" in str(excinfo.value)
     assert "timed out" in str(excinfo.value)
-    assert ("cancel", client.token) in client.calls
+    assert ("cancel", client.reservation_id) in client.calls
 
 
 async def test_acquire_reservation_expired_raises_and_cleans_up(
@@ -242,7 +246,7 @@ async def test_acquire_reservation_expired_raises_and_cleans_up(
         await session.acquire_place("board")
 
     assert "expired" in str(excinfo.value)
-    assert ("cancel", client.token) in client.calls
+    assert ("cancel", client.reservation_id) in client.calls
     assert "acquire" not in client.call_kinds()
 
 
@@ -267,7 +271,7 @@ async def test_acquire_cancelled_midflight_cleans_up_reservation(
         await task
 
     assert ("create", {"name": "board"}, 0.0) in client.calls
-    assert ("cancel", client.token) in client.calls
+    assert ("cancel", client.reservation_id) in client.calls
     assert "acquire" not in client.call_kinds()
 
 
@@ -278,8 +282,8 @@ async def test_acquire_reuses_own_tracked_reservation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """reserve({"name": X}) then acquire_place(X): the place already carries
-    our (keepalive-tracked) token, so acquire must REUSE it -- poll our own
-    token, acquire, cancel -- and must NOT create a second reservation that
+    our (keepalive-tracked) reservation ID, so acquire must REUSE it -- poll our own
+    reservation ID, acquire, cancel -- and must NOT create a second reservation that
     could never allocate (it would poll to timeout)."""
     # Block keepalive at its first sleep so its background poll never fires and
     # never consumes the poll queue; the acquire path reuses an already-
@@ -291,40 +295,40 @@ async def test_acquire_reuses_own_tracked_reservation(
 
     monkeypatch.setattr(session_mod, "_sleep", blocking_sleep)
     client = FakeClient()
-    # Place is reserved by OUR token and already allocated to it.
-    client.set_place("board", acquired="", reservation=client.token)
+    # Place is reserved by OUR reservation ID and already allocated to it.
+    client.set_place("board", acquired="", reservation=client.reservation_id)
     client.poll_states = ["allocated"]
     client.poll_allocations = {"main": ["board"]}
     session = make_session(client)
 
     res = await session.reserve({"name": "board"})
-    assert res["token"] == client.token
-    assert client.token in session._keepalive_tasks
+    assert res["reservation_id"] == client.reservation_id
+    assert client.reservation_id in session._keepalive_tasks
 
     result = await session.acquire_place("board")
 
     kinds = client.call_kinds()
     # Exactly ONE create -- from reserve(); acquire reused, did not create.
     assert kinds.count("create") == 1
-    # Reused our token: polled it, acquired, then cancelled after acquire.
+    # Reused our reservation ID: polled it, acquired, then cancelled after acquire.
     assert "poll" in kinds
     assert kinds.index("acquire") > kinds.index("poll")
-    assert ("cancel", client.token) in client.calls
+    assert ("cancel", client.reservation_id) in client.calls
     assert kinds.index("cancel") > kinds.index("acquire")
     # cancel-after-acquire also untracked the keepalive.
-    assert client.token not in session._keepalive_tasks
+    assert client.reservation_id not in session._keepalive_tasks
     assert result["acquired"] == IDENTITY
 
 
 async def test_acquire_place_reserved_by_foreign_token_creates_new_reservation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A place reserved by a token we do NOT track (someone else's) keeps the
+    """A place reserved by a reservation ID we do NOT track (someone else's) keeps the
     existing behavior: create our own reservation, which correctly queues
     behind theirs in the labgrid scheduler."""
     monkeypatch.setattr(session_mod, "_sleep", _instant_sleep)
     client = FakeClient()
-    client.set_place("board", acquired="", reservation="foreign-token")
+    client.set_place("board", acquired="", reservation="foreign-reservation")
     client.poll_states = ["waiting", "allocated"]
     client.poll_allocations = {"main": ["board"]}
     session = make_session(client)
@@ -332,12 +336,12 @@ async def test_acquire_place_reserved_by_foreign_token_creates_new_reservation(
     result = await session.acquire_place("board")
 
     kinds = client.call_kinds()
-    # We created our OWN new reservation (foreign token is not ours to reuse).
+    # We created our OWN new reservation (foreign reservation ID is not ours to reuse).
     create_call = next(c for c in client.calls if c[0] == "create")
     assert create_call[1] == {"name": "board"}
     assert kinds.count("create") == 1
     assert kinds.index("acquire") > kinds.index("poll")
-    assert ("cancel", client.token) in client.calls
+    assert ("cancel", client.reservation_id) in client.calls
     assert result["acquired"] == IDENTITY
 
 
@@ -468,14 +472,14 @@ async def test_reserve_returns_reservation_and_registers_keepalive(
 
     res = await session.reserve({"board": "foo"}, prio=1.0)
 
-    assert res["token"] == client.token
+    assert res["reservation_id"] == client.reservation_id
     assert ("create", {"board": "foo"}, 1.0) in client.calls
-    assert client.token in session._keepalive_tasks
+    assert client.reservation_id in session._keepalive_tasks
 
-    await session.cancel_reservation(client.token)
+    await session.cancel_reservation(client.reservation_id)
 
-    assert client.token not in session._keepalive_tasks
-    assert ("cancel", client.token) in client.calls
+    assert client.reservation_id not in session._keepalive_tasks
+    assert ("cancel", client.reservation_id) in client.calls
 
 
 async def test_keepalive_polls_until_terminal_then_untracks(
@@ -487,11 +491,11 @@ async def test_keepalive_polls_until_terminal_then_untracks(
     session = make_session(client)
 
     await session.reserve({"name": "board"})
-    task = session._keepalive_tasks[client.token]
+    task = session._keepalive_tasks[client.reservation_id]
     await task  # runs to the terminal "acquired" state
 
     assert client.call_kinds().count("poll") == 3
-    assert client.token not in session._keepalive_tasks
+    assert client.reservation_id not in session._keepalive_tasks
 
 
 async def test_keepalive_stops_when_poll_errors(
@@ -502,15 +506,15 @@ async def test_keepalive_stops_when_poll_errors(
     session = make_session(client)
 
     async def failing_poll(_token: str) -> dict[str, object]:
-        raise CoordinatorError("token gone")
+        raise CoordinatorError("reservation gone")
 
     monkeypatch.setattr(client, "poll_reservation", failing_poll)
 
     await session.reserve({"name": "board"})
-    task = session._keepalive_tasks[client.token]
+    task = session._keepalive_tasks[client.reservation_id]
     await task  # must exit, not raise
 
-    assert client.token not in session._keepalive_tasks
+    assert client.reservation_id not in session._keepalive_tasks
 
 
 async def test_shutdown_cancels_tasks_cleanly_and_is_idempotent(
@@ -526,7 +530,7 @@ async def test_shutdown_cancels_tasks_cleanly_and_is_idempotent(
     session = make_session(client)
 
     await session.reserve({"name": "a"})
-    client.token = "TOK2"
+    client.reservation_id = "TOK2"
     await session.reserve({"name": "b"})
     assert len(session._keepalive_tasks) == 2
 
@@ -551,10 +555,10 @@ async def test_reservation_wait_returns_allocated_on_first_poll(
     client.poll_allocations = {"main": ["board"]}
     session = make_session(client)
 
-    result = await session.reservation_wait(client.token)
+    result = await session.reservation_wait(client.reservation_id)
 
     assert result == {
-        "token": client.token,
+        "reservation_id": client.reservation_id,
         "state": "allocated",
         "allocations": {"main": ["board"]},
         "changed": True,
@@ -571,7 +575,7 @@ async def test_reservation_wait_polls_until_allocated(
     client.poll_allocations = {"main": ["board"]}
     session = make_session(client)
 
-    result = await session.reservation_wait(client.token)
+    result = await session.reservation_wait(client.reservation_id)
 
     assert result["state"] == "allocated"
     assert result["changed"] is True
@@ -588,7 +592,7 @@ async def test_reservation_wait_times_out_without_raising(
     client.poll_states = ["waiting"]  # never allocates
     session = make_session(client)
 
-    result = await session.reservation_wait(client.token, timeout_s=3.0)
+    result = await session.reservation_wait(client.reservation_id, timeout_s=3.0)
 
     assert result["state"] == "waiting"
     assert result["changed"] is False
@@ -605,7 +609,7 @@ async def test_reservation_wait_stops_early_on_dead_reservation(
     client.poll_states = ["waiting", "expired"]
     session = make_session(client)
 
-    result = await session.reservation_wait(client.token, timeout_s=25.0)
+    result = await session.reservation_wait(client.reservation_id, timeout_s=25.0)
 
     assert result["state"] == "expired"
     assert result["changed"] is False
@@ -623,7 +627,7 @@ async def test_reservation_wait_clamps_timeout_to_25s(
     client.poll_states = ["waiting"]  # never allocates
     session = make_session(client)
 
-    await session.reservation_wait(client.token, timeout_s=9999.0)
+    await session.reservation_wait(client.reservation_id, timeout_s=9999.0)
 
     assert clock.now() <= 25.0 + session_mod.ACQUIRE_POLL_INTERVAL_S
 
