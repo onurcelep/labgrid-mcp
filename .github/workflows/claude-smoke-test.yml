@@ -39,7 +39,7 @@ jobs:
           # Cheapest capable model on purpose: this is a liveness probe, not
           # real work — a one-turn reply. See the factory:model-routing skill;
           # Haiku is the floor of the routing ladder and all a "pong" needs.
-          claude_args: '--model claude-haiku-4-5 --max-turns 2'
+          claude_args: '--model claude-haiku-5-5 --max-turns 2'
           prompt: 'Reply with the single word: pong. Do nothing else.'
 
       - name: Assert the run was not a silent failure
