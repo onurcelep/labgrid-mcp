@@ -225,6 +225,40 @@ jobs:
           [ "${DENIALS:-0}" -le 20 ] || echo "::warning::High permission-denial count ($DENIALS): the review agent was repeatedly blocked — check --allowedTools vs the instructions it was given."
           echo "Health + artifact assertions passed (artifacts=$ARTIFACTS, denials=$DENIALS)."
 
+      - name: Collapse superseded review comments
+        # The review command posts a fresh "## Code review" comment on every
+        # push (use_sticky_comment covers only the action's own tracking
+        # comment, which this prompt-driven mode never creates). Collapse the
+        # older ones as outdated so the newest review is the visible one.
+        # Runs only after this run's review was verified posted, keeps the
+        # newest, touches no other comment, and never fails the check.
+        if: ${{ !cancelled() && steps.assert.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          # GraphQL reports the app bot's login without the "[bot]" suffix.
+          gh api graphql -F owner="$OWNER" -F repo="$REPO" -F pr="$PR_NUMBER" -f query='
+            query($owner: String!, $repo: String!, $pr: Int!) {
+              repository(owner: $owner, name: $repo) {
+                pullRequest(number: $pr) {
+                  comments(last: 100) { nodes { id author { login } body isMinimized createdAt } }
+                }
+              }
+            }' --jq '[.data.repository.pullRequest.comments.nodes[]
+                      | select(.author.login == "claude" and (.body | startswith("## Code review")))]
+                     | sort_by(.createdAt) | .[:-1][] | select(.isMinimized | not) | .id' |
+          while read -r id; do
+            gh api graphql -F id="$id" -f query='
+              mutation($id: ID!) {
+                minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { clientMutationId }
+              }' >/dev/null && echo "collapsed superseded review comment $id"
+          done
+
       - name: Preserve execution log when evidence is needed
         # The execution trace is the only record of WHICH tool calls were
         # denied — without it, incident diagnosis is archaeology. But on
