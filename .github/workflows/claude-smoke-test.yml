@@ -14,7 +14,8 @@ concurrency:
 
 jobs:
   smoke-test:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest migrates to new LTS images on GitHub's schedule.
+    runs-on: ubuntu-24.04
     permissions:
       # The smoke test only invokes the action with a trivial prompt and reads
       # its execution log — it posts nothing and pushes nothing. Read-only
@@ -26,7 +27,7 @@ jobs:
       issues: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
