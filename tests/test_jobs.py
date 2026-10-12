@@ -268,14 +268,14 @@ async def test_submit_flash_rolls_back_pin_on_driver_bind_failure() -> None:
     reg = make_registry(targets)
 
     with pytest.raises(TargetError, match="not owned"):
-        await reg.submit_flash("p", "dfu", lambda driver: (lambda: None))
+        await reg.submit_flash("p", "dfu", lambda driver: lambda: None)
 
     assert "p" not in targets.pins  # rolled back, not left pinned
     assert reg.jobs() == []  # no job was ever created
     # The place is free again -- a resubmit is not blocked by the failed attempt
     # (a fresh bind that succeeds this time).
     targets._flash_driver_error = None
-    job = (await reg.submit_flash("p", "dfu", lambda driver: (lambda: None)))["job"]
+    job = (await reg.submit_flash("p", "dfu", lambda driver: lambda: None))["job"]
     assert isinstance(job, str)
     await wait_true(lambda: reg.status(job)["state"] == "completed")
     await reg.shutdown()
@@ -300,9 +300,9 @@ async def test_submit_flash_duplicate_place_rejected_like_submit() -> None:
     reg = make_registry()
     gate = threading.Event()
 
-    job = (await reg.submit_flash("p", "dfu", lambda driver: (lambda: gate.wait(5.0))))["job"]
+    job = (await reg.submit_flash("p", "dfu", lambda driver: lambda: gate.wait(5.0)))["job"]
     with pytest.raises(JobError, match="already has a running flash job"):
-        await reg.submit_flash("p", "fastboot", lambda driver: (lambda: None))
+        await reg.submit_flash("p", "fastboot", lambda driver: lambda: None)
 
     gate.set()
     assert isinstance(job, str)
@@ -317,12 +317,12 @@ async def test_submit_flash_rejects_resubmit_during_bind_window() -> None:
     targets = FakeTargets(bind_gates={"p": gate})
     reg = make_registry(targets)
 
-    task = asyncio.create_task(reg.submit_flash("p", "dfu", lambda driver: (lambda: None)))
+    task = asyncio.create_task(reg.submit_flash("p", "dfu", lambda driver: lambda: None))
     await wait_true(lambda: "p" in targets.bind_entered)
     assert reg.jobs() == []  # bind in flight -- no _Job registered yet
 
     with pytest.raises(JobError, match="already has a running flash job"):
-        await reg.submit_flash("p", "fastboot", lambda driver: (lambda: None))
+        await reg.submit_flash("p", "fastboot", lambda driver: lambda: None)
 
     gate.set()
     handle = await asyncio.wait_for(task, timeout=5.0)
@@ -339,12 +339,12 @@ async def test_submit_flash_does_not_serialize_binds_on_different_places() -> No
     targets = FakeTargets(bind_gates={"a": gate_a})
     reg = make_registry(targets)
 
-    task_a = asyncio.create_task(reg.submit_flash("a", "dfu", lambda driver: (lambda: None)))
+    task_a = asyncio.create_task(reg.submit_flash("a", "dfu", lambda driver: lambda: None))
     await wait_true(lambda: "a" in targets.bind_entered)
     assert "a" not in targets.bind_exited  # a's bind is still gated open
 
     handle_b = await asyncio.wait_for(
-        reg.submit_flash("b", "dfu", lambda driver: (lambda: None)), timeout=2.0
+        reg.submit_flash("b", "dfu", lambda driver: lambda: None), timeout=2.0
     )
     assert handle_b["place"] == "b"
     assert "b" in targets.bind_exited  # b finished WITHOUT waiting for a's gate
@@ -372,7 +372,7 @@ async def test_submit_flash_rolls_back_pin_when_cancelled_mid_bind() -> None:
     targets = FakeTargets(bind_gates={"p": gate})
     reg = make_registry(targets)
 
-    task = asyncio.create_task(reg.submit_flash("p", "dfu", lambda driver: (lambda: None)))
+    task = asyncio.create_task(reg.submit_flash("p", "dfu", lambda driver: lambda: None))
     await wait_true(lambda: "p" in targets.bind_entered)
 
     task.cancel()
@@ -385,7 +385,7 @@ async def test_submit_flash_rolls_back_pin_when_cancelled_mid_bind() -> None:
     # The place is free again -- cancellation must not leak the reservation.
     # (Re-set the shared gate: it's still wired to "p" in targets._bind_gates.)
     gate.set()
-    job = (await reg.submit_flash("p", "dfu", lambda driver: (lambda: None)))["job"]
+    job = (await reg.submit_flash("p", "dfu", lambda driver: lambda: None))["job"]
     assert isinstance(job, str)
     await wait_true(lambda: reg.status(job)["state"] == "completed")
     await reg.shutdown()
@@ -403,7 +403,7 @@ async def test_submit_flash_rolls_back_when_cancelled_at_post_bind_lock() -> Non
     # Let phase 1 (reserve+pin) run and the task suspend INSIDE the gated bind
     # BEFORE we grab the lock -- grabbing it earlier would block phase 1 itself
     # and the cancellation would land at the wrong await.
-    task = asyncio.create_task(reg.submit_flash("p", "dfu", lambda driver: (lambda: None)))
+    task = asyncio.create_task(reg.submit_flash("p", "dfu", lambda driver: lambda: None))
     await wait_true(lambda: "p" in targets.bind_entered)
     assert targets.pins.get("p") is not None  # phase 1 committed: pinned
 
@@ -421,7 +421,7 @@ async def test_submit_flash_rolls_back_when_cancelled_at_post_bind_lock() -> Non
     assert reg.jobs() == []  # no half-created job
 
     # The place is fully usable again.
-    job = (await reg.submit_flash("p", "dfu", lambda driver: (lambda: None)))["job"]
+    job = (await reg.submit_flash("p", "dfu", lambda driver: lambda: None))["job"]
     assert isinstance(job, str)
     await wait_true(lambda: reg.status(job)["state"] == "completed")
     await reg.shutdown()
@@ -438,7 +438,7 @@ async def test_running_job_for_tracks_running_bind_window_and_finished() -> None
 
     run_gate = threading.Event()
     task = asyncio.create_task(
-        reg.submit_flash("p", "dfu", lambda driver: (lambda: run_gate.wait(5.0)))
+        reg.submit_flash("p", "dfu", lambda driver: lambda: run_gate.wait(5.0))
     )
     await wait_true(lambda: "p" in targets.bind_entered)
     assert reg.running_job_for("p") is not None  # mid-bind counts as running
@@ -485,7 +485,7 @@ async def test_submit_flash_rolls_back_pin_when_thread_start_fails(
     monkeypatch.setattr(threading.Thread, "start", boom)
 
     with pytest.raises(RuntimeError, match="cannot start thread"):
-        await reg.submit_flash("p", "dfu", lambda driver: (lambda: None))
+        await reg.submit_flash("p", "dfu", lambda driver: lambda: None)
 
     assert "p" not in targets.pins
     assert reg.jobs() == []

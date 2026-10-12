@@ -330,9 +330,7 @@ class _Entry:
 class _PlaceView:
     """Place view as ``on_resource_added`` expects it (§11.9 member 2)."""
 
-    def __init__(
-        self, name: str, tags: dict[str, Any], acquired_resources: list[Any]
-    ) -> None:
+    def __init__(self, name: str, tags: dict[str, Any], acquired_resources: list[Any]) -> None:
         self.name = name
         self.tags = tags
         self.acquired_resources = acquired_resources
@@ -550,9 +548,7 @@ class TargetManager:
         and ``invalidate``'s ``deactivate_all_drivers`` tears it down.
         """
         if not self._config.ssh_keyfile:
-            raise TargetError(
-                "LABGRID_MCP_SSH_KEYFILE is not set; SSH tools need a private key"
-            )
+            raise TargetError("LABGRID_MCP_SSH_KEYFILE is not set; SSH tools need a private key")
         async with self._lock_for(place):
             cached = await self._get_or_build(place)
             return await asyncio.to_thread(self._activate_ssh, cached, place)

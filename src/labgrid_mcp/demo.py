@@ -74,9 +74,7 @@ def check_port_available(port: int, host: str = "127.0.0.1") -> None:
         try:
             sock.bind((host, port))
         except OSError as exc:
-            raise DemoError(
-                f"port {port} is already in use -- pick another with --port"
-            ) from exc
+            raise DemoError(f"port {port} is already in use -- pick another with --port") from exc
 
 
 def _find_script(name: str) -> str:
@@ -507,9 +505,7 @@ def run_demo(port: int) -> None:
         print(render_banner(port), flush=True)
 
         stop_event = threading.Event()
-        watcher = threading.Thread(
-            target=_watch_ownership, args=(port, stop_event), daemon=True
-        )
+        watcher = threading.Thread(target=_watch_ownership, args=(port, stop_event), daemon=True)
         watcher.start()
 
         def _handle_signal(signum: int, frame: FrameType | None) -> None:

@@ -127,9 +127,7 @@ async def test_demo_stack_end_to_end(demo_stack: demo.DemoStack) -> None:
         assert demo_stack.switch.value() is False
 
         set_on_result = await asyncio.wait_for(
-            session.call_tool(
-                "set_power", {"place": demo.PLACE_NAME, "action": "on"}
-            ),
+            session.call_tool("set_power", {"place": demo.PLACE_NAME, "action": "on"}),
             timeout=_RPC_TIMEOUT_S,
         )
         assert set_on_result.isError is False
@@ -141,9 +139,7 @@ async def test_demo_stack_end_to_end(demo_stack: demo.DemoStack) -> None:
         assert demo_stack.switch.value() is True
 
         set_off_result = await asyncio.wait_for(
-            session.call_tool(
-                "set_power", {"place": demo.PLACE_NAME, "action": "off"}
-            ),
+            session.call_tool("set_power", {"place": demo.PLACE_NAME, "action": "off"}),
             timeout=_RPC_TIMEOUT_S,
         )
         assert set_off_result.isError is False

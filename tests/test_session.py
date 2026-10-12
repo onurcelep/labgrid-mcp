@@ -385,9 +385,7 @@ async def test_snapshot_sync_returns_stale_after_bounded_deadline(
     # as-is -- no hang, no exception.
     assert result["acquired"] == ""
     assert clock.now() >= session_mod._SNAPSHOT_SYNC_TIMEOUT_S
-    expected_polls = int(
-        session_mod._SNAPSHOT_SYNC_TIMEOUT_S / session_mod._SNAPSHOT_SYNC_POLL_S
-    )
+    expected_polls = int(session_mod._SNAPSHOT_SYNC_TIMEOUT_S / session_mod._SNAPSHOT_SYNC_POLL_S)
     # pre-check + initial synced read + exactly one read per poll tick until
     # the (fake-clock) deadline: the loop is bounded, not unbounded.
     assert client.place_calls == 2 + expected_polls

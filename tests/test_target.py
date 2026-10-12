@@ -1333,9 +1333,7 @@ def test_write_image_kwargs_forwarded_to_driver_verbatim() -> None:
         def write_image(
             self, filename: str, *, mode: Any, partition: int | None, skip: int, seek: int
         ) -> None:
-            received.update(
-                filename=filename, mode=mode, partition=partition, skip=skip, seek=seek
-            )
+            received.update(filename=filename, mode=mode, partition=partition, skip=skip, seek=seek)
 
     kwargs = write_image_kwargs(mode="dd", partition=1, skip=2, seek=4)
     FakeStorage().write_image("img.bin", **kwargs)

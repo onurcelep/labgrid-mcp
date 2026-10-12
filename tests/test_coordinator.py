@@ -244,17 +244,13 @@ class FakeCoordinatorStub:
             raise self._set_tags_error
         return pb2.SetPlaceTagsResponse()
 
-    async def AddPlaceMatch(
-        self, request: pb2.AddPlaceMatchRequest
-    ) -> pb2.AddPlaceMatchResponse:
+    async def AddPlaceMatch(self, request: pb2.AddPlaceMatchRequest) -> pb2.AddPlaceMatchResponse:
         self.last_add_place_match_request = request
         if self._add_place_match_error is not None:
             raise self._add_place_match_error
         return pb2.AddPlaceMatchResponse()
 
-    async def AddPlaceAlias(
-        self, request: pb2.AddPlaceAliasRequest
-    ) -> pb2.AddPlaceAliasResponse:
+    async def AddPlaceAlias(self, request: pb2.AddPlaceAliasRequest) -> pb2.AddPlaceAliasResponse:
         self.last_add_place_alias_request = request
         if self._add_place_alias_error is not None:
             raise self._add_place_alias_error
@@ -532,9 +528,7 @@ async def test_reconnect_clears_stale_places(monkeypatch: pytest.MonkeyPatch) ->
         assert await _wait_until(lambda: len(client.places()) == 2)
 
         drop_trigger.set()  # force session 1 to fail; reconnect to session 2
-        assert await _wait_until(
-            lambda: {p["name"] for p in client.places()} == {"board-a"}
-        )
+        assert await _wait_until(lambda: {p["name"] for p in client.places()} == {"board-a"})
     finally:
         await client.stop()
 
@@ -704,9 +698,7 @@ async def test_resources_cleared_on_reconnect(monkeypatch: pytest.MonkeyPatch) -
         assert await _wait_until(lambda: len(client.resources()) == 2)
 
         drop_trigger.set()  # force session 1 to fail; reconnect to session 2
-        assert await _wait_until(
-            lambda: {r["name"] for r in client.resources()} == {"a"}
-        )
+        assert await _wait_until(lambda: {r["name"] for r in client.resources()} == {"a"})
     finally:
         await client.stop()
 
@@ -1148,10 +1140,7 @@ async def test_delete_place_match_happy() -> None:
         await client.delete_place_match("board-a", "exporter/group/NetworkPowerPort")
         assert stub.last_delete_place_match_request is not None
         assert stub.last_delete_place_match_request.placename == "board-a"
-        assert (
-            stub.last_delete_place_match_request.pattern
-            == "exporter/group/NetworkPowerPort"
-        )
+        assert stub.last_delete_place_match_request.pattern == "exporter/group/NetworkPowerPort"
     finally:
         await client.stop()
 
@@ -1198,9 +1187,7 @@ async def test_delete_place_match_forwards_rename() -> None:
     client = CoordinatorClient(make_config(), _stub_factory=lambda: stub)
     try:
         await client.start()
-        await client.delete_place_match(
-            "board-a", "exporter/group/NetworkPowerPort", rename="pp1"
-        )
+        await client.delete_place_match("board-a", "exporter/group/NetworkPowerPort", rename="pp1")
         assert stub.last_delete_place_match_request is not None
         assert stub.last_delete_place_match_request.HasField("rename")
         assert stub.last_delete_place_match_request.rename == "pp1"
@@ -1255,9 +1242,7 @@ _NOT_CONNECTED_CALLS: list[tuple[str, tuple[object, ...]]] = [
 
 
 @pytest.mark.parametrize("method_name, args", _NOT_CONNECTED_CALLS)
-async def test_wrapper_not_connected_raises(
-    method_name: str, args: tuple[object, ...]
-) -> None:
+async def test_wrapper_not_connected_raises(method_name: str, args: tuple[object, ...]) -> None:
     client = CoordinatorClient(make_config(), _stub_factory=lambda: FakeCoordinatorStub([]))
     method = getattr(client, method_name)
     with pytest.raises(CoordinatorError):
@@ -1385,9 +1370,7 @@ async def test_wait_for_change_timeout_returns_unchanged_cursor() -> None:
     try:
         await client.start()
         cursor = client.change_cursor()
-        result = await asyncio.wait_for(
-            client.wait_for_change(cursor, timeout=0.05), timeout=2.0
-        )
+        result = await asyncio.wait_for(client.wait_for_change(cursor, timeout=0.05), timeout=2.0)
         assert result == cursor
     finally:
         await client.stop()
@@ -1416,9 +1399,7 @@ async def test_wait_for_change_concurrent_waiters_both_wake() -> None:
             await asyncio.sleep(0)
         feed_trigger.set()
 
-        result_a, result_b = await asyncio.wait_for(
-            asyncio.gather(task_a, task_b), timeout=2.0
-        )
+        result_a, result_b = await asyncio.wait_for(asyncio.gather(task_a, task_b), timeout=2.0)
         assert result_a > cursor
         assert result_b > cursor
     finally:
