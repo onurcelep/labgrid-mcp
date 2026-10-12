@@ -78,12 +78,22 @@ jobs:
           # --comment is required for the findings to reach the PR: since
           # anthropics/claude-code@6dcc7d8b (2026-02-11) the command posts
           # nothing without it, leaving the review only in the runner log.
+          # The eligibility override is load-bearing: /code-review opens with a
+          # gate that stops without posting on PRs it judges automated or
+          # trivially correct, and a propagation PR whose own body reads
+          # "automatic propagation ... restamps the standard files" walks
+          # straight into it. The agent then posts nothing, which the assertion
+          # below correctly calls an unreviewed PR and turns red. The job's
+          # `if:` guard above is the only eligibility decision this workflow
+          # delegates; triage of what deserves attention belongs in the review
+          # comment, not in a decision to stay silent.
           # The memory nudge below makes this reviewer the enforcement point for
           # the factory:repo-memory write path (its YES/NO lists are the criteria):
           # agents under turn pressure skip the memory write first, and nothing
           # else notices the omission.
           prompt: |
             /code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }} --comment
+            Override the review command's eligibility gate: every PR that reaches this workflow is one to review. Do not stop early because the author is a bot, the diff is small, or the change looks automated, routine or obviously correct. Read the diff and post the outcome on the PR in every case, including a clean "no findings".
             Additionally: if this change clearly reflects a non-obvious, reusable learning by the factory:repo-memory skill's criteria (an environment quirk, a hard-won gotcha, a cross-component contract — not anything derivable from the code or git history) and the PR neither adds nor updates a docs/memory/ fact, report that as a finding. Routine changes must not be flagged.
 
       - name: Assert the review was not a silent failure
@@ -186,7 +196,16 @@ jobs:
             } | grep -Fcxi 'claude[bot]' || true
           )
           if [ "${ARTIFACTS:-0}" -eq 0 ]; then
-            report "**Review ran but posted nothing** (num_turns=$NUM_TURNS, cost=$COST, permission_denials=$DENIALS). A review with no posted comment is unverifiable — treat this PR as not reviewed. A high denial count means the agent was blocked from acting (check the workflow's --allowedTools against what CLAUDE.md tells agents to do); retry by pushing a new commit."
+            # Two causes with opposite fixes, told apart by the denial count:
+            # the agent was blocked from posting, or it was able to post and
+            # chose not to. Naming the wrong one sends the operator rotating a
+            # healthy token or widening an allowlist that was never the problem.
+            if [ "${DENIALS:-0}" -eq 0 ]; then
+              CAUSE="Zero denials, so the agent could post and chose not to — the review command's eligibility gate declining the PR as automated or trivial is the known case. The prompt overrides that gate, so a recurrence means the override needs strengthening; nothing about the token or the allowlist. The preserved execution log carries the agent's own stated reason."
+            else
+              CAUSE="$DENIALS permission denials, so the agent was blocked from acting and \"completed\" by narrating. Check the workflow's --allowedTools against what CLAUDE.md tells agents to do."
+            fi
+            report "**Review ran but posted nothing** (num_turns=$NUM_TURNS, cost=$COST, permission_denials=$DENIALS). A review with no posted comment is unverifiable — treat this PR as not reviewed. $CAUSE Retry by pushing a new commit."
             echo "::error::Review produced no posted artifact (comment/review). See the PR comment."
             exit 1
           fi
