@@ -40,6 +40,21 @@ jobs:
       - name: Lint (ruff)
         run: uv run ruff check
 
+      - name: Format check (ruff)
+        run: uv run ruff format --check
+
+      # The pre-commit hook runs its own ruff, pinned in .pre-commit-config.yaml;
+      # when that pin and uv.lock disagree, the hook and CI enforce different
+      # rules. Bump both together.
+      - name: Pre-commit ruff pin matches uv.lock
+        run: |
+          locked=$(uv run ruff --version | awk '{print $2}')
+          pinned=$(awk '/ruff-pre-commit/ {found=1} found && /rev:/ {sub(/.*rev: *v?/, ""); print; exit}' .pre-commit-config.yaml)
+          if [ "$locked" != "$pinned" ]; then
+            echo "::error file=.pre-commit-config.yaml::ruff-pre-commit rev v$pinned does not match ruff $locked in uv.lock"
+            exit 1
+          fi
+
       - name: Type check (mypy --strict, src + tests)
         run: uv run mypy
 
