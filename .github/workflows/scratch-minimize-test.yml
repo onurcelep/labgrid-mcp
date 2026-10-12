@@ -1,0 +1,42 @@
+name: Scratch minimize test
+
+# Temporary: verifies that the review job's GITHUB_TOKEN (same permissions)
+# can minimize claude[bot] review comments. Not for merge.
+on:
+  pull_request:
+    types: [synchronize]
+
+jobs:
+  minimize:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+    steps:
+      - name: Wait for two review comments, minimize the older ones
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){comments(first:100){nodes{id author{login} body isMinimized createdAt}}}}}'
+          list() {
+            gh api graphql -f query="$query" -F owner="$OWNER" -F repo="$REPO" -F pr="$PR" \
+              --jq '[.data.repository.pullRequest.comments.nodes[] | select(.author.login == "claude") | select(.body | startswith("## Code review"))]'
+          }
+          for i in $(seq 1 60); do
+            n=$(list | jq 'length')
+            echo "review comments: $n"
+            [ "$n" -ge 2 ] && break
+            sleep 20
+          done
+          [ "$n" -ge 2 ] || { echo "::error::second review comment never appeared"; exit 1; }
+          list | jq -r 'sort_by(.createdAt) | .[:-1][] | select(.isMinimized | not) | .id' | while read -r id; do
+            echo "minimizing $id"
+            gh api graphql -f query='mutation($id:ID!){minimizeComment(input:{subjectId:$id,classifier:OUTDATED}){minimizedComment{isMinimized minimizedReason}}}' -F id="$id"
+          done
+          echo "final state:"
+          list | jq -c 'sort_by(.createdAt) | .[] | {createdAt, isMinimized}'
