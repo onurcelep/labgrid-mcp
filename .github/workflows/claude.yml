@@ -31,7 +31,8 @@ jobs:
         github.actor == github.event.repository.owner.login ||
         contains(format(',{0},', vars.CLAUDE_TRUSTED_ACTORS), format(',{0},', github.actor))
       )
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest migrates to new LTS images on GitHub's schedule.
+    runs-on: ubuntu-24.04
     permissions:
       # Trust boundary for these scopes: docs/SECURITY-MODEL.md (responder row).
       # Write per the action's documented example: branch pushes and PR
@@ -45,7 +46,7 @@ jobs:
       actions: read # Required for Claude to read CI results on PRs
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
