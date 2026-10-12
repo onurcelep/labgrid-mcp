@@ -58,6 +58,11 @@ jobs:
           # responder work, turn-capped. Escalate per-issue by writing
           # "use opus" in the issue body if needed.
           claude_args: '--model claude-sonnet-5-5 --max-turns 40'
+          # Headless runs must not background subagents: the run can end with
+          # their results still pending, so the agent posts nothing and only
+          # narrates that it is waiting. Foreground subagents block until done.
+          settings: |
+            {"env": {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"}}
           # The Action does not load the repo's .claude/settings.json (it is
           # stripped from the runner's checkout), so plugins must be
           # self-loaded via these inputs rather than relying on settings.json.

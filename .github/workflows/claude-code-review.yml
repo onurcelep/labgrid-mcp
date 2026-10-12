@@ -65,6 +65,11 @@ jobs:
           # so allowing it would hand this job the whole write surface of its
           # token. Trust boundary: docs/SECURITY-MODEL.md (review row).
           claude_args: '--model opus --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr review:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(grep:*),Bash(wc:*),Bash(cat:*),Bash(head:*),Bash(tail:*)"'
+          # Headless runs must not background subagents: the run can end with
+          # their results still pending, so the agent posts nothing and only
+          # narrates that it is waiting. Foreground subagents block until done.
+          settings: |
+            {"env": {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"}}
           # The Action does not load the repo's .claude/settings.json (it is
           # stripped from the runner's checkout), so plugins must be
           # self-loaded via these inputs rather than relying on settings.json.
@@ -78,12 +83,22 @@ jobs:
           # --comment is required for the findings to reach the PR: since
           # anthropics/claude-code@6dcc7d8b (2026-02-11) the command posts
           # nothing without it, leaving the review only in the runner log.
+          # The eligibility override is load-bearing: /code-review opens with a
+          # gate that stops without posting on PRs it judges automated or
+          # trivially correct, and a propagation PR whose own body reads
+          # "automatic propagation ... restamps the standard files" walks
+          # straight into it. The agent then posts nothing, which the assertion
+          # below correctly calls an unreviewed PR and turns red. The job's
+          # `if:` guard above is the only eligibility decision this workflow
+          # delegates; triage of what deserves attention belongs in the review
+          # comment, not in a decision to stay silent.
           # The memory nudge below makes this reviewer the enforcement point for
           # the factory:repo-memory write path (its YES/NO lists are the criteria):
           # agents under turn pressure skip the memory write first, and nothing
           # else notices the omission.
           prompt: |
             /code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }} --comment
+            Override the review command's eligibility gate: every PR that reaches this workflow is one to review. Do not stop early because the author is a bot, the diff is small, or the change looks automated, routine or obviously correct. Read the diff and post the outcome on the PR in every case, including a clean "no findings".
             Additionally: if this change clearly reflects a non-obvious, reusable learning by the factory:repo-memory skill's criteria (an environment quirk, a hard-won gotcha, a cross-component contract — not anything derivable from the code or git history) and the PR neither adds nor updates a docs/memory/ fact, report that as a finding. Routine changes must not be flagged.
 
       - name: Assert the review was not a silent failure
@@ -173,7 +188,9 @@ jobs:
           # proves a REVIEW happened. Require one artifact from the app bot
           # on any of the three surfaces (excluding this step's own
           # self-report comment).
-          DENIALS=$(jq -r '.permission_denials_count // 0' <<<"$RESULT")
+          # Older action versions reported a count; current ones report the
+          # denied calls as a permission_denials array. Accept either.
+          DENIALS=$(jq -r '.permission_denials_count // (.permission_denials | if type == "array" then length else 0 end)' <<<"$RESULT")
           echo "high_denials=$([ "${DENIALS:-0}" -gt 20 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           # Exact bot login (-F -x): a substring match would false-positive on
           # any user with "claude" in the name and silently rot if it did.
@@ -186,7 +203,21 @@ jobs:
             } | grep -Fcxi 'claude[bot]' || true
           )
           if [ "${ARTIFACTS:-0}" -eq 0 ]; then
-            report "**Review ran but posted nothing** (num_turns=$NUM_TURNS, cost=$COST, permission_denials=$DENIALS). A review with no posted comment is unverifiable — treat this PR as not reviewed. A high denial count means the agent was blocked from acting (check the workflow's --allowedTools against what CLAUDE.md tells agents to do); retry by pushing a new commit."
+            # Two causes with opposite fixes, told apart by the denial count:
+            # the agent was blocked from posting, or it was able to post and
+            # chose not to. Naming the wrong one sends the operator rotating a
+            # healthy token or widening an allowlist that was never the problem.
+            # A third cause is checked first because it occurs at any denial
+            # count: subagents that were backgrounded and never awaited.
+            BACKGROUNDED=$(jq '[.. | objects | select(.type? == "tool_result") | .content | tostring | select(test("Async agent launched"))] | length' "$EXECUTION_FILE" 2>/dev/null || echo 0)
+            if [ "${BACKGROUNDED:-0}" -gt 0 ]; then
+              CAUSE="$BACKGROUNDED subagent call(s) ran in the background, so the run ended with their results pending and nothing to post. The workflow's settings input must set CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1; check it is still there. Nothing about the token or the allowlist."
+            elif [ "${DENIALS:-0}" -eq 0 ]; then
+              CAUSE="Zero denials, so the agent could post and chose not to — the review command's eligibility gate declining the PR as automated or trivial is the known case. The prompt overrides that gate, so a recurrence means the override needs strengthening; nothing about the token or the allowlist. The preserved execution log carries the agent's own stated reason."
+            else
+              CAUSE="$DENIALS permission denials, so the agent was blocked from acting and \"completed\" by narrating. Check the workflow's --allowedTools against what CLAUDE.md tells agents to do."
+            fi
+            report "**Review ran but posted nothing** (num_turns=$NUM_TURNS, cost=$COST, permission_denials=$DENIALS). A review with no posted comment is unverifiable — treat this PR as not reviewed. $CAUSE Retry by pushing a new commit."
             echo "::error::Review produced no posted artifact (comment/review). See the PR comment."
             exit 1
           fi
