@@ -98,10 +98,14 @@ class CoordinatorInfo:
 
 
 def _serialize_reservation(res_pb2: Any) -> dict[str, object]:
-    """``Reservation.asdict()`` plus the token it omits (design §11.5)."""
-    res = common.Reservation.from_pb2(res_pb2)
-    data: dict[str, object] = dict(res.asdict())
-    data["token"] = res.token
+    """``Reservation.asdict()`` plus the reservation ID it omits (design §11.5).
+
+    The ID is read from the protobuf ``token`` field, not the wrapper object:
+    labgrid after 26.0 renamed ``Reservation.token`` to ``Reservation.id``,
+    while the wire field kept its name, so only the protobuf is stable.
+    """
+    data: dict[str, object] = dict(common.Reservation.from_pb2(res_pb2).asdict())
+    data["reservation_id"] = res_pb2.token
     return data
 
 
@@ -244,8 +248,8 @@ class CoordinatorClient:
         reserve one specific place, or tag filters like ``{"board": "foo"}`` —
         design §11.8: the scheduler matches ``filter.tags.issubset(place.tags)``
         per group, and labgrid allocations assume a single ``"main"`` group).
-        Returns the serialized reservation, including its ``token``. Raises
-        ``CoordinatorError`` when not connected or on RPC failure.
+        Returns the serialized reservation, including its ``reservation_id``.
+        Raises ``CoordinatorError`` when not connected or on RPC failure.
         """
         if self._stub is None or not self._connected:
             raise CoordinatorError("not connected to coordinator")
@@ -260,25 +264,29 @@ class CoordinatorClient:
             raise CoordinatorError(f"CreateReservation failed: {exc}") from exc
         return _serialize_reservation(response.reservation)
 
-    async def cancel_reservation_rpc(self, token: str) -> None:
-        """Cancel a reservation by token via the session-bound unary RPC.
+    async def cancel_reservation_rpc(self, reservation_id: str) -> None:
+        """Cancel a reservation by ID via the session-bound unary RPC.
 
         Raises ``CoordinatorError`` when not connected or on RPC failure.
         """
-        await self._call_unary("CancelReservation", pb2.CancelReservationRequest(token=token))
+        await self._call_unary(
+            "CancelReservation", pb2.CancelReservationRequest(token=reservation_id)
+        )
 
-    async def poll_reservation(self, token: str) -> dict[str, object]:
-        """Poll a reservation by token; also serves as its keepalive.
+    async def poll_reservation(self, reservation_id: str) -> dict[str, object]:
+        """Poll a reservation by ID; also serves as its keepalive.
 
         ``PollReservation`` calls ``res.refresh()`` on the coordinator (design
         §11.8), so polling extends the reservation's TTL. Returns the
-        serialized reservation, including its ``token``. Raises
+        serialized reservation, including its ``reservation_id``. Raises
         ``CoordinatorError`` when not connected or on RPC failure.
         """
         if self._stub is None or not self._connected:
             raise CoordinatorError("not connected to coordinator")
         try:
-            response = await self._stub.PollReservation(pb2.PollReservationRequest(token=token))
+            response = await self._stub.PollReservation(
+                pb2.PollReservationRequest(token=reservation_id)
+            )
         except grpc.aio.AioRpcError as exc:
             raise CoordinatorError(f"PollReservation failed: {exc.details()}") from exc
         except Exception as exc:

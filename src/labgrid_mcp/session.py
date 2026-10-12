@@ -13,17 +13,17 @@ SAFE — the place stays acquired.** Observed sequence (labgrid 26.0)::
 
     reservation created: allocated
     AFTER ACQUIRE  acquired=spikehost/spikeuser reservation=IZX23UPGA0
-    cancel_reservation_rpc(token)
+    cancel_reservation_rpc(reservation_id)
     AFTER CANCEL   acquired=spikehost/spikeuser reservation=None
-    poll after cancel: errored (FAILED_PRECONDITION — token gone)
+    poll after cancel: errored (FAILED_PRECONDITION — reservation gone)
 
 So ``acquire_place`` cancels the reservation right after acquiring: there is no
-token to keep alive past the acquire, and nothing to leak. This matches §11.8
+reservation to keep alive past the acquire, and nothing to leak. This matches §11.8
 ("after acquire no keepalive is needed") — the acquire hands ownership to the
 session's ClientStream identity, which is independent of the reservation.
 
-Keepalive design: **one ``asyncio.Task`` per tracked token** (keyed in
-``_keepalive_tasks``), not a single shared loop. Per-token tasks make the
+Keepalive design: **one ``asyncio.Task`` per tracked reservation** (keyed in
+``_keepalive_tasks``), not a single shared loop. Per-reservation tasks make the
 lifecycle trivial to reason about — registration is a dict insert, cancellation
 cancels exactly one task and awaits it, and a task that reaches a terminal
 reservation state removes only its own entry. The acquire flow does *not* spawn
@@ -103,28 +103,28 @@ class PlaceSession:
         if place is None or not (place.get("acquired") or place.get("reservation")):
             await self._client.acquire_place_rpc(name)
             return await self._snapshot_synced(name, self._is_ours)
-        # Taken or reserved. If the place is reserved by a token we already
+        # Taken or reserved. If the place is reserved by a reservation we already
         # hold (a prior ``reserve()`` we keepalive-track), reuse THAT
         # reservation. Creating a second ``{"name": name}`` reservation here
         # would deadlock: the coordinator only allocates places whose
         # ``reservation is None`` (labgrid/remote/coordinator.py:1007), and the
-        # place is already bound to our first token -- so a second reservation
+        # place is already bound to our first reservation -- so a second reservation
         # can never allocate and we would poll to timeout.
         reservation = place.get("reservation")
         if isinstance(reservation, str) and reservation in self._keepalive_tasks:
-            return await self._acquire_via_reservation(name, token=reservation)
+            return await self._acquire_via_reservation(name, reservation_id=reservation)
         return await self._acquire_via_reservation(name)
 
     async def _acquire_via_reservation(
-        self, name: str, *, token: str | None = None
+        self, name: str, *, reservation_id: str | None = None
     ) -> dict[str, object]:
-        if token is None:
+        if reservation_id is None:
             res = await self._client.create_reservation({"name": name})
-            token = str(res["token"])
+            reservation_id = str(res["reservation_id"])
         else:
             # Reuse a reservation we already own (keepalive-tracked): poll it
             # to learn its current state -- it may already be allocated.
-            res = await self._client.poll_reservation(token)
+            res = await self._client.poll_reservation(reservation_id)
         try:
             deadline = _monotonic() + self._config.acquire_timeout
             while not _allocates(res, name):
@@ -139,23 +139,23 @@ class PlaceSession:
                         f"{self._config.acquire_timeout}s (reservation {state})"
                     )
                 await _sleep(ACQUIRE_POLL_INTERVAL_S)
-                res = await self._client.poll_reservation(token)
+                res = await self._client.poll_reservation(reservation_id)
             await self._client.acquire_place_rpc(name)
         except BaseException:
             # Timeout, RPC failure, or cancellation: drop the reservation so it
             # does not linger. Best-effort — if the cancel await is itself
             # interrupted, the reservation expires within its ~60 s TTL since
             # polling has stopped. ``cancel_reservation`` (not the bare RPC)
-            # also stops the keepalive when this was a reused, tracked token; a
-            # freshly-created token is untracked, so the stop is a no-op.
+            # also stops the keepalive when this was a reused, tracked reservation; a
+            # freshly-created reservation is untracked, so the stop is a no-op.
             with contextlib.suppress(Exception):
-                await self.cancel_reservation(token)
+                await self.cancel_reservation(reservation_id)
             raise
         # Acquired. Spike: the place stays acquired after cancel, so release the
-        # reservation now rather than keep a token alive for nothing. Untrack
-        # the keepalive too (no-op for a freshly-created token).
+        # reservation now rather than keep a reservation alive for nothing. Untrack
+        # the keepalive too (no-op for a freshly-created reservation).
         with contextlib.suppress(CoordinatorError):
-            await self.cancel_reservation(token)
+            await self.cancel_reservation(reservation_id)
         return await self._snapshot_synced(name, self._is_ours)
 
     async def release_place(self, name: str, *, kick: bool = False) -> dict[str, object]:
@@ -200,22 +200,24 @@ class PlaceSession:
     async def reserve(self, filters: dict[str, str], prio: float = 0.0) -> dict[str, object]:
         """Create a reservation and keep it alive in the background.
 
-        Returns the serialized reservation (including ``token``). A per-token
+        Returns the serialized reservation (including ``reservation_id``). A per-reservation
         keepalive task polls every ``KEEPALIVE_INTERVAL_S`` until the
         reservation is acquired, expires, is invalidated, or is cancelled.
         """
         res = await self._client.create_reservation(filters, prio)
-        token = str(res["token"])
-        self._start_keepalive(token)
+        reservation_id = str(res["reservation_id"])
+        self._start_keepalive(reservation_id)
         return res
 
-    async def cancel_reservation(self, token: str) -> None:
+    async def cancel_reservation(self, reservation_id: str) -> None:
         """Cancel a reservation and stop its keepalive task."""
-        await self._stop_keepalive(token)
-        await self._client.cancel_reservation_rpc(token)
+        await self._stop_keepalive(reservation_id)
+        await self._client.cancel_reservation_rpc(reservation_id)
 
-    async def reservation_wait(self, token: str, timeout_s: float = 25.0) -> dict[str, object]:
-        """Block-and-poll ``token`` until it allocates a place, or ``timeout_s``.
+    async def reservation_wait(
+        self, reservation_id: str, timeout_s: float = 25.0
+    ) -> dict[str, object]:
+        """Block-and-poll ``reservation_id`` until it allocates a place, or ``timeout_s``.
 
         §11.14: only an *acquired* reservation auto-refreshes coordinator-side
         -- a ``waiting``/``allocated``-but-not-yet-acquired one otherwise
@@ -233,12 +235,12 @@ class PlaceSession:
 
         ``timeout_s`` is clamped to at most 25.0 (mirrors ``wait_for_change``)
         to stay under typical MCP client request timeouts. Returns
-        ``{"token", "state", "allocations", "changed"}`` -- ``changed`` is
+        ``{"reservation_id", "state", "allocations", "changed"}`` -- ``changed`` is
         True iff the FINAL observed state is ``"allocated"`` (true whether
         that was already so on the very first poll -- e.g. a free place
         allocates immediately -- or only after several poll iterations); a
         dead reservation (``expired``/``invalid``) or a genuine timeout both
-        report ``changed=False`` without raising -- an unknown/expired token
+        report ``changed=False`` without raising -- an unknown/expired reservation
         is a legitimate "did not allocate" outcome for a *wait*, unlike
         ``acquire_place``'s hard failure. Never raises itself (only
         ``poll_reservation``'s own ``CoordinatorError`` can propagate, e.g.
@@ -246,14 +248,14 @@ class PlaceSession:
         """
         clamped = min(timeout_s, 25.0)
         deadline = _monotonic() + clamped
-        res = await self._client.poll_reservation(token)
+        res = await self._client.poll_reservation(reservation_id)
         while res.get("state") != "allocated":
             if res.get("state") in _DEAD_RESERVATION_STATES or _monotonic() >= deadline:
                 break
             await _sleep(ACQUIRE_POLL_INTERVAL_S)
-            res = await self._client.poll_reservation(token)
+            res = await self._client.poll_reservation(reservation_id)
         return {
-            "token": token,
+            "reservation_id": reservation_id,
             "state": res.get("state"),
             "allocations": res.get("allocations"),
             "changed": res.get("state") == "allocated",
@@ -261,8 +263,8 @@ class PlaceSession:
 
     async def shutdown(self) -> None:
         """Cancel every keepalive task; idempotent, leaves no orphan tasks."""
-        for token in list(self._keepalive_tasks):
-            await self._stop_keepalive(token)
+        for reservation_id in list(self._keepalive_tasks):
+            await self._stop_keepalive(reservation_id)
 
     # ---- internals ------------------------------------------------------
 
@@ -288,30 +290,32 @@ class PlaceSession:
             place = self._snapshot(name)
         return place
 
-    def _start_keepalive(self, token: str) -> None:
-        if token in self._keepalive_tasks:
+    def _start_keepalive(self, reservation_id: str) -> None:
+        if reservation_id in self._keepalive_tasks:
             return
         loop = asyncio.get_running_loop()
-        self._keepalive_tasks[token] = loop.create_task(self._keepalive_loop(token))
+        self._keepalive_tasks[reservation_id] = loop.create_task(
+            self._keepalive_loop(reservation_id)
+        )
 
-    async def _stop_keepalive(self, token: str) -> None:
-        task = self._keepalive_tasks.pop(token, None)
+    async def _stop_keepalive(self, reservation_id: str) -> None:
+        task = self._keepalive_tasks.pop(reservation_id, None)
         if task is None:
             return
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
-    async def _keepalive_loop(self, token: str) -> None:
+    async def _keepalive_loop(self, reservation_id: str) -> None:
         try:
             while True:
                 await _sleep(KEEPALIVE_INTERVAL_S)
                 try:
-                    res = await self._client.poll_reservation(token)
+                    res = await self._client.poll_reservation(reservation_id)
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    # Reservation gone (cancelled/unknown token) or transient
+                    # Reservation gone (cancelled/unknown reservation) or transient
                     # failure: stop polling. Never let the task die unretrieved.
                     return
                 if res.get("state") in _KEEPALIVE_DONE_STATES:
@@ -319,8 +323,8 @@ class PlaceSession:
         finally:
             # Auto-untrack, but only our own registration (cancel_reservation
             # may already have popped and replaced nothing).
-            if self._keepalive_tasks.get(token) is asyncio.current_task():
-                del self._keepalive_tasks[token]
+            if self._keepalive_tasks.get(reservation_id) is asyncio.current_task():
+                del self._keepalive_tasks[reservation_id]
 
 
 def _allocates(res: dict[str, object], name: str) -> bool:

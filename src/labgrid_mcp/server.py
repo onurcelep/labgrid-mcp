@@ -11,11 +11,12 @@ import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Annotated, Any, Literal, Protocol
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ResourceError, ToolError
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from labgrid_mcp import coordinator, demo
 from labgrid_mcp.config import Config, load_config
@@ -87,8 +88,10 @@ class _SessionLike(Protocol):
     """Surface of ``PlaceSession`` this module calls."""
 
     async def reserve(self, filters: dict[str, str], prio: float = 0.0) -> dict[str, object]: ...
-    async def cancel_reservation(self, token: str) -> None: ...
-    async def reservation_wait(self, token: str, timeout_s: float = 25.0) -> dict[str, object]: ...
+    async def cancel_reservation(self, reservation_id: str) -> None: ...
+    async def reservation_wait(
+        self, reservation_id: str, timeout_s: float = 25.0
+    ) -> dict[str, object]: ...
     async def release_place(self, name: str, *, kick: bool = False) -> dict[str, object]: ...
     async def acquire_place(self, name: str) -> dict[str, object]: ...
     async def shutdown(self) -> None: ...
@@ -178,6 +181,58 @@ def _normalize_job_payload(payload: dict[str, object]) -> dict[str, object]:
         base, _, loader = kind.partition(":")
         payload = {**payload, "kind": base}
     return {**payload, "loader": loader}
+
+
+# Deprecated ``token`` alias of ``reservation_id`` on the reservation tools,
+# kept for clients written against labgrid-mcp 0.1.x. Marked deprecated in the
+# JSON schema via json_schema_extra: pydantic's own ``deprecated=`` would emit a
+# runtime DeprecationWarning on every field access.
+_DeprecatedTokenParam = Annotated[
+    str | None,
+    Field(
+        description="Deprecated alias of reservation_id; pass reservation_id instead.",
+        json_schema_extra={"deprecated": True},
+    ),
+]
+
+
+# reservation_wait is polled in a loop; warn about the alias once per process.
+_token_deprecation_logged = False
+
+
+def _with_legacy_token(reservation: dict[str, object]) -> dict[str, object]:
+    """Add the deprecated ``token`` key mirroring ``reservation_id`` (additive).
+
+    Applied at every point a reservation payload crosses to the client:
+    ``list_reservations``, ``reserve``, ``reservation_wait`` and the
+    ``labgrid://reservations`` resource.
+    """
+    return {**reservation, "token": reservation.get("reservation_id")}
+
+
+def _resolve_reservation_id(reservation_id: str | None, token: str | None) -> str:
+    """Pick the reservation ID from the tool arguments, honouring the alias.
+
+    Empty strings count as absent. Conflicting values are refused rather than
+    resolved by precedence: these tools cancel or keep alive a reservation, so
+    guessing could act on the wrong one.
+    """
+    global _token_deprecation_logged
+    reservation_id = reservation_id or None
+    token = token or None
+    if reservation_id is None:
+        if token is None:
+            raise ToolError("reservation_id is required (deprecated alias: token)")
+        if not _token_deprecation_logged:
+            _token_deprecation_logged = True
+            _log.warning("tool argument 'token' is deprecated; use 'reservation_id'")
+        return token
+    if token is not None and token != reservation_id:
+        raise ToolError(
+            f"conflicting reservation_id {reservation_id!r} and deprecated "
+            f"token {token!r}; pass only reservation_id"
+        )
+    return reservation_id
 
 
 def _exporters_of(acquired_resources: object) -> list[str]:
@@ -570,7 +625,8 @@ def build_server(
     async def list_reservations() -> dict[str, object]:
         """Current reservations (live unary RPC to the coordinator)."""
         try:
-            return {"reservations": await client.get_reservations()}
+            reservations = await client.get_reservations()
+            return {"reservations": [_with_legacy_token(r) for r in reservations]}
         except CoordinatorError as exc:
             raise ToolError(str(exc)) from exc
 
@@ -614,41 +670,54 @@ def build_server(
             """Create a reservation (with the given filters/priority) and keep
             it alive in the background until it is cancelled, expires, or is
             invalidated. Returns the serialized reservation, including its
-            token.
+            ``reservation_id`` (also mirrored as the deprecated ``token``).
             """
             try:
-                return {"reservation": await session.reserve(filters, prio)}
+                return {"reservation": _with_legacy_token(await session.reserve(filters, prio))}
             except CoordinatorError as exc:
                 raise ToolError(str(exc)) from exc
 
         @mcp.tool(annotations=destructive_annotations)
-        async def cancel_reservation(token: str) -> dict[str, object]:
-            """Cancel a reservation by token and stop its keepalive task."""
+        async def cancel_reservation(
+            reservation_id: str | None = None, token: _DeprecatedTokenParam = None
+        ) -> dict[str, object]:
+            """Cancel a reservation by ID and stop its keepalive task.
+
+            ``reservation_id`` is required; ``token`` is its deprecated alias.
+            """
+            rid = _resolve_reservation_id(reservation_id, token)
             try:
-                await session.cancel_reservation(token)
+                await session.cancel_reservation(rid)
             except CoordinatorError as exc:
                 raise ToolError(str(exc)) from exc
-            return {"cancelled": token}
+            return {"cancelled": rid}
 
         @mcp.tool(annotations=reserve_annotations)
-        async def reservation_wait(token: str, timeout_s: float = 25.0) -> dict[str, object]:
+        async def reservation_wait(
+            reservation_id: str | None = None,
+            timeout_s: float = 25.0,
+            token: _DeprecatedTokenParam = None,
+        ) -> dict[str, object]:
             """Block-and-poll a reservation until it allocates a place, or times out.
 
             ``timeout_s`` is clamped to at most 25.0 (PlaceSession.reservation_wait,
             §11.14), like ``wait_for_change``. Only an *acquired* reservation
             auto-refreshes coordinator-side -- polling here IS what keeps a
             merely-``waiting``/``allocated`` reservation's TTL alive, so the
-            token still needs an ``acquire_place`` (or another ``reservation_wait``/
+            reservation still needs an ``acquire_place`` (or another ``reservation_wait``/
             ``cancel_reservation``) soon after this returns, or it expires
             ~60s after creation regardless of the outcome reported here.
-            Returns ``{"token", "state", "allocations", "changed"}`` --
+            Returns ``{"reservation_id", "state", "allocations", "changed"}``
+            plus the deprecated ``token`` mirror of ``reservation_id`` --
             ``changed`` is True iff the reservation is allocated by the time
-            this returns; a dead token (expired/invalid/unknown) or a genuine
-            timeout both report ``changed=False`` without raising. Non-
-            destructive but not idempotent (each call keepalive-polls).
+            this returns; a dead reservation (expired/invalid/unknown) or a
+            genuine timeout both report ``changed=False`` without raising.
+            Non-destructive but not idempotent (each call keepalive-polls).
+            ``reservation_id`` is required; ``token`` is its deprecated alias.
             """
+            rid = _resolve_reservation_id(reservation_id, token)
             try:
-                return await session.reservation_wait(token, timeout_s)
+                return _with_legacy_token(await session.reservation_wait(rid, timeout_s))
             except CoordinatorError as exc:
                 raise ToolError(str(exc)) from exc
 
@@ -1557,7 +1626,8 @@ def build_server(
     async def reservations_resource() -> str:
         """JSON array of current reservations."""
         try:
-            return json.dumps(await client.get_reservations())
+            reservations = await client.get_reservations()
+            return json.dumps([_with_legacy_token(r) for r in reservations])
         except CoordinatorError as exc:
             raise ResourceError(str(exc)) from exc
 
