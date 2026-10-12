@@ -371,9 +371,7 @@ async def test_acquire_release_reserve_hardware_free(coordinator: int) -> None:
 
     await asyncio.wait_for(fixture_client.start(), timeout=_RPC_TIMEOUT_S)
     try:
-        await asyncio.wait_for(
-            fixture_client.add_place(_PLACE_NAME), timeout=_RPC_TIMEOUT_S
-        )
+        await asyncio.wait_for(fixture_client.add_place(_PLACE_NAME), timeout=_RPC_TIMEOUT_S)
 
         params = StdioServerParameters(
             command="uv",
@@ -498,9 +496,7 @@ async def test_acquire_release_reserve_hardware_free(coordinator: int) -> None:
             assert fixture_identity in foreign_error_content.text
 
             release_kick_result = await asyncio.wait_for(
-                session.call_tool(
-                    "release_place", {"name": _PLACE_NAME, "kick": True}
-                ),
+                session.call_tool("release_place", {"name": _PLACE_NAME, "kick": True}),
                 timeout=_RPC_TIMEOUT_S,
             )
             assert release_kick_result.isError is False
@@ -539,9 +535,7 @@ async def test_acquire_waits_for_reservation_then_allocates(coordinator: int) ->
 
     await asyncio.wait_for(fixture_client.start(), timeout=_RPC_TIMEOUT_S)
     try:
-        await asyncio.wait_for(
-            fixture_client.add_place(_PLACE_NAME), timeout=_RPC_TIMEOUT_S
-        )
+        await asyncio.wait_for(fixture_client.add_place(_PLACE_NAME), timeout=_RPC_TIMEOUT_S)
         # Fixture holds the place under its own identity, so the server's
         # acquire must go through reserve->poll rather than a direct acquire.
         await asyncio.wait_for(
@@ -597,9 +591,7 @@ async def test_acquire_waits_for_reservation_then_allocates(coordinator: int) ->
                     timeout=_RPC_TIMEOUT_S,
                 )
 
-                acquire_result = await asyncio.wait_for(
-                    acquire_task, timeout=_RPC_TIMEOUT_S
-                )
+                acquire_result = await asyncio.wait_for(acquire_task, timeout=_RPC_TIMEOUT_S)
             finally:
                 acquire_task.cancel()
                 with contextlib.suppress(Exception, asyncio.CancelledError):
@@ -656,7 +648,7 @@ _IO_MATCH_PATTERN = f"{_EXPORTER_NAME}/{_EXPORTER_GROUP}/HttpDigitalOutput"
 # instead of just the second segment, so the power path (`/relay/...`) and
 # the io path (`/io/...`) never collide in the shared STATE dict. Same
 # GET->"0"/"1", PUT-sets-body behaviour as the appendix for both.
-_FAKE_SWITCH_SRC = '''\
+_FAKE_SWITCH_SRC = """\
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 STATE = {}
@@ -674,7 +666,7 @@ class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
 if __name__ == "__main__":
     HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
-'''
+"""
 
 
 def _spawn_logged(
@@ -804,9 +796,7 @@ async def test_power_and_io_via_fake_switch(coordinator: int, tmp_path: Path) ->
         _wait_for_port("127.0.0.1", switch_port, _PORT_TIMEOUT_S)
 
         await asyncio.wait_for(fixture_client.start(), timeout=_RPC_TIMEOUT_S)
-        await asyncio.wait_for(
-            fixture_client.add_place(_POWER_PLACE_NAME), timeout=_RPC_TIMEOUT_S
-        )
+        await asyncio.wait_for(fixture_client.add_place(_POWER_PLACE_NAME), timeout=_RPC_TIMEOUT_S)
         await asyncio.wait_for(
             fixture_client.add_place_match(_POWER_PLACE_NAME, _POWER_MATCH_PATTERN),
             timeout=_RPC_TIMEOUT_S,
@@ -890,9 +880,7 @@ async def test_power_and_io_via_fake_switch(coordinator: int, tmp_path: Path) ->
             assert acquired_place.get("acquired") == server_identity
 
             set_on_result = await asyncio.wait_for(
-                session.call_tool(
-                    "set_power", {"place": _POWER_PLACE_NAME, "action": "on"}
-                ),
+                session.call_tool("set_power", {"place": _POWER_PLACE_NAME, "action": "on"}),
                 timeout=_RPC_TIMEOUT_S,
             )
             assert set_on_result.isError is False
@@ -903,9 +891,7 @@ async def test_power_and_io_via_fake_switch(coordinator: int, tmp_path: Path) ->
             assert _switch_value(switch_port) == "1"
 
             set_off_result = await asyncio.wait_for(
-                session.call_tool(
-                    "set_power", {"place": _POWER_PLACE_NAME, "action": "off"}
-                ),
+                session.call_tool("set_power", {"place": _POWER_PLACE_NAME, "action": "off"}),
                 timeout=_RPC_TIMEOUT_S,
             )
             assert set_off_result.isError is False
@@ -934,9 +920,7 @@ async def test_power_and_io_via_fake_switch(coordinator: int, tmp_path: Path) ->
             assert _switch_value(switch_port, "io/0/value") == "0"
 
             set_io_on_result = await asyncio.wait_for(
-                session.call_tool(
-                    "set_io", {"place": _POWER_PLACE_NAME, "value": True}
-                ),
+                session.call_tool("set_io", {"place": _POWER_PLACE_NAME, "value": True}),
                 timeout=_RPC_TIMEOUT_S,
             )
             assert set_io_on_result.isError is False
@@ -947,9 +931,7 @@ async def test_power_and_io_via_fake_switch(coordinator: int, tmp_path: Path) ->
             assert _switch_value(switch_port, "io/0/value") == "1"
 
             set_io_off_result = await asyncio.wait_for(
-                session.call_tool(
-                    "set_io", {"place": _POWER_PLACE_NAME, "value": False}
-                ),
+                session.call_tool("set_io", {"place": _POWER_PLACE_NAME, "value": False}),
                 timeout=_RPC_TIMEOUT_S,
             )
             assert set_io_off_result.isError is False
@@ -1098,9 +1080,7 @@ async def test_power_resource_name_selects_independent_endpoints(
         _wait_for_port("127.0.0.1", switch_port, _PORT_TIMEOUT_S)
 
         await asyncio.wait_for(fixture_client.start(), timeout=_RPC_TIMEOUT_S)
-        await asyncio.wait_for(
-            fixture_client.add_place(_NAME_PLACE_NAME), timeout=_RPC_TIMEOUT_S
-        )
+        await asyncio.wait_for(fixture_client.add_place(_NAME_PLACE_NAME), timeout=_RPC_TIMEOUT_S)
         await asyncio.wait_for(
             fixture_client.add_place_match(_NAME_PLACE_NAME, _NAME_MATCH_A),
             timeout=_RPC_TIMEOUT_S,
@@ -1169,9 +1149,7 @@ async def test_power_resource_name_selects_independent_endpoints(
             # No resource_name on a place with two candidates: a tool error
             # naming BOTH, never labgrid's raw "multiple resources matching".
             ambiguous_result = await asyncio.wait_for(
-                session.call_tool(
-                    "set_power", {"place": _NAME_PLACE_NAME, "action": "on"}
-                ),
+                session.call_tool("set_power", {"place": _NAME_PLACE_NAME, "action": "on"}),
                 timeout=_RPC_TIMEOUT_S,
             )
             assert ambiguous_result.isError is True
@@ -1330,9 +1308,7 @@ async def test_power_cycle_delay_e2e(coordinator: int, tmp_path: Path) -> None:
         _wait_for_port("127.0.0.1", switch_port, _PORT_TIMEOUT_S)
 
         await asyncio.wait_for(fixture_client.start(), timeout=_RPC_TIMEOUT_S)
-        await asyncio.wait_for(
-            fixture_client.add_place(_CYCLE_PLACE_NAME), timeout=_RPC_TIMEOUT_S
-        )
+        await asyncio.wait_for(fixture_client.add_place(_CYCLE_PLACE_NAME), timeout=_RPC_TIMEOUT_S)
         await asyncio.wait_for(
             fixture_client.add_place_match(_CYCLE_PLACE_NAME, _CYCLE_MATCH_PATTERN),
             timeout=_RPC_TIMEOUT_S,
@@ -1465,9 +1441,7 @@ async def test_release_from_hardware_free(coordinator: int) -> None:
 
     await asyncio.wait_for(fixture_client.start(), timeout=_RPC_TIMEOUT_S)
     try:
-        await asyncio.wait_for(
-            fixture_client.add_place(_PLACE_NAME), timeout=_RPC_TIMEOUT_S
-        )
+        await asyncio.wait_for(fixture_client.add_place(_PLACE_NAME), timeout=_RPC_TIMEOUT_S)
 
         params = StdioServerParameters(
             command="uv",
@@ -1586,9 +1560,7 @@ async def test_reservation_wait_allocates_free_place(coordinator: int) -> None:
 
     await asyncio.wait_for(fixture_client.start(), timeout=_RPC_TIMEOUT_S)
     try:
-        await asyncio.wait_for(
-            fixture_client.add_place(_PLACE_NAME), timeout=_RPC_TIMEOUT_S
-        )
+        await asyncio.wait_for(fixture_client.add_place(_PLACE_NAME), timeout=_RPC_TIMEOUT_S)
 
         params = StdioServerParameters(
             command="uv",
@@ -1658,7 +1630,7 @@ _CONSOLE_MATCH_PATTERN = (
 # on disk (flushed immediately), so the test can confirm the bridge actually
 # received the bytes without relying on the echo/console_read round trip at
 # all. The echo/banner behaviour itself is verbatim from the appendix.
-_BRIDGE_SRC = '''\
+_BRIDGE_SRC = """\
 import socket, sys, threading
 
 def _serve_conn(conn, recv_log_path):
@@ -1686,7 +1658,7 @@ def main(port, recv_log_path):
 
 if __name__ == "__main__":
     main(int(sys.argv[1]), sys.argv[2])
-'''
+"""
 
 
 async def _drain_console_until(
@@ -1895,9 +1867,7 @@ async def test_console_via_tcp_bridge(coordinator: int, tmp_path: Path) -> None:
             assert isinstance(first_session_id, str) and first_session_id
 
             send_result = await asyncio.wait_for(
-                session.call_tool(
-                    "console_send", {"session": first_session_id, "data": "hello\n"}
-                ),
+                session.call_tool("console_send", {"session": first_session_id, "data": "hello\n"}),
                 timeout=_RPC_TIMEOUT_S,
             )
             assert send_result.isError is False
@@ -2005,9 +1975,7 @@ async def test_console_via_tcp_bridge(coordinator: int, tmp_path: Path) -> None:
 _FLASH_PLACE_NAME = "e2e-flash-place"
 
 
-async def test_flash_gating_and_local_file_validation(
-    coordinator: int, tmp_path: Path
-) -> None:
+async def test_flash_gating_and_local_file_validation(coordinator: int, tmp_path: Path) -> None:
     """Exercise the FLASH opt-in gate and the pinned local-file validation.
 
     FLASH is excluded from the default env even without readonly (DESIGN.md
@@ -2040,9 +2008,7 @@ async def test_flash_gating_and_local_file_validation(
 
     await asyncio.wait_for(fixture_client.start(), timeout=_RPC_TIMEOUT_S)
     try:
-        await asyncio.wait_for(
-            fixture_client.add_place(_FLASH_PLACE_NAME), timeout=_RPC_TIMEOUT_S
-        )
+        await asyncio.wait_for(fixture_client.add_place(_FLASH_PLACE_NAME), timeout=_RPC_TIMEOUT_S)
 
         params = StdioServerParameters(
             command="uv",
@@ -2421,9 +2387,7 @@ async def test_metadata_round_trip_and_wait_for_change(coordinator: int) -> None
             )
 
             changed_result = await asyncio.wait_for(
-                session.call_tool(
-                    "wait_for_change", {"cursor": cursor, "timeout_s": 10.0}
-                ),
+                session.call_tool("wait_for_change", {"cursor": cursor, "timeout_s": 10.0}),
                 timeout=_RPC_TIMEOUT_S,
             )
             assert changed_result.isError is False
@@ -2701,9 +2665,7 @@ Subsystem sftp {sftp_server}
         echo_server = _EchoServer()
 
         await asyncio.wait_for(fixture_client.start(), timeout=_RPC_TIMEOUT_S)
-        await asyncio.wait_for(
-            fixture_client.add_place(_SSH_PLACE_NAME), timeout=_RPC_TIMEOUT_S
-        )
+        await asyncio.wait_for(fixture_client.add_place(_SSH_PLACE_NAME), timeout=_RPC_TIMEOUT_S)
         await asyncio.wait_for(
             fixture_client.add_place_match(_SSH_PLACE_NAME, _SSH_MATCH_PATTERN),
             timeout=_RPC_TIMEOUT_S,
@@ -2814,9 +2776,7 @@ Subsystem sftp {sftp_server}
             # The nonzero-rc gap: a command that fails must surface its real
             # exit code, not be silently treated as success.
             false_result = await asyncio.wait_for(
-                session.call_tool(
-                    "ssh_run", {"place": _SSH_PLACE_NAME, "command": "false"}
-                ),
+                session.call_tool("ssh_run", {"place": _SSH_PLACE_NAME, "command": "false"}),
                 timeout=_RPC_TIMEOUT_S,
             )
             assert false_result.isError is False

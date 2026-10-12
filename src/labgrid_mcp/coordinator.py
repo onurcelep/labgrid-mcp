@@ -314,9 +314,7 @@ class CoordinatorClient:
         Exposed via the ``set_place_tags`` tool (Category.METADATA). Raises
         ``CoordinatorError`` when not connected or on RPC failure.
         """
-        await self._call_unary(
-            "SetPlaceTags", pb2.SetPlaceTagsRequest(placename=name, tags=tags)
-        )
+        await self._call_unary("SetPlaceTags", pb2.SetPlaceTagsRequest(placename=name, tags=tags))
 
     async def add_place_alias(self, name: str, alias: str) -> None:
         """Add an alias to a place. Idempotent on the coordinator (set.add).
@@ -353,9 +351,7 @@ class CoordinatorClient:
             "SetPlaceComment", pb2.SetPlaceCommentRequest(placename=name, comment=comment)
         )
 
-    async def add_place_match(
-        self, name: str, pattern: str, rename: str | None = None
-    ) -> None:
+    async def add_place_match(self, name: str, pattern: str, rename: str | None = None) -> None:
         """Add a resource match (``"exporter/group/cls"`` or ``".../name"``) to a place.
 
         Makes a place match exported resources so ``acquired_resources``/
@@ -380,9 +376,7 @@ class CoordinatorClient:
             request.rename = rename
         await self._call_unary("AddPlaceMatch", request)
 
-    async def delete_place_match(
-        self, name: str, pattern: str, rename: str | None = None
-    ) -> None:
+    async def delete_place_match(self, name: str, pattern: str, rename: str | None = None) -> None:
         """Remove a resource match from a place.
 
         ``rename`` is accepted for API symmetry with ``add_place_match`` and
@@ -466,9 +460,7 @@ class CoordinatorClient:
             self._stub = self._stub_factory()
             self._channel = None
         else:
-            self._channel = _channel_factory(
-                self._config.coordinator, options=CHANNEL_OPTIONS
-            )
+            self._channel = _channel_factory(self._config.coordinator, options=CHANNEL_OPTIONS)
             self._stub = pb2_grpc.CoordinatorStub(self._channel)
 
     async def _teardown(self) -> None:
@@ -537,9 +529,7 @@ class CoordinatorClient:
             # ``start()`` raises instead of hanging.
             if self._started is not None and not self._started.done():
                 self._started.set_exception(
-                    CoordinatorError(
-                        f"cannot reach coordinator at {self._config.coordinator}"
-                    )
+                    CoordinatorError(f"cannot reach coordinator at {self._config.coordinator}")
                 )
 
     async def _connect_and_pump(self) -> None:

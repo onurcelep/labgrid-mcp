@@ -550,9 +550,7 @@ class _StubForwards:
             "remote_port": remote_port,
         }
 
-    async def open_remote(
-        self, place: str, remote_port: int, local_port: int
-    ) -> dict[str, object]:
+    async def open_remote(self, place: str, remote_port: int, local_port: int) -> dict[str, object]:
         self.open_remote_calls.append((place, remote_port, local_port))
         if isinstance(self.open_remote_value, (ForwardError, TargetError)):
             raise self.open_remote_value
@@ -2778,9 +2776,7 @@ async def test_get_io_forwards_resource_name_and_echoes_it() -> None:
         _stub_forwards(),
     )
 
-    _content, structured = await _call_tool(
-        mcp, "get_io", {"place": "p1", "resource_name": "io-a"}
-    )
+    _content, structured = await _call_tool(mcp, "get_io", {"place": "p1", "resource_name": "io-a"})
 
     assert structured == {"place": "p1", "value": True, "resource_name": "io-a"}
     assert targets.io_get_calls == [("p1", "io-a")]
@@ -3648,9 +3644,7 @@ async def test_write_image_rejects_bad_mode_before_submit(tmp_path: Path) -> Non
     )
 
     with pytest.raises(ToolError, match="unknown write_image mode 'bogus'"):
-        await _call_tool(
-            mcp, "write_image", {"place": "p1", "file": str(file), "mode": "bogus"}
-        )
+        await _call_tool(mcp, "write_image", {"place": "p1", "file": str(file), "mode": "bogus"})
 
     assert jobs.submit_calls == []
 
