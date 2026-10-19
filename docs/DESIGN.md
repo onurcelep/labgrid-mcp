@@ -1008,7 +1008,9 @@ it drives no real flash. This is a *decisive* no, not a "couldn't get it working
 (`util/helper.py:197`); every flash driver does `from ..util.helper import
 processwrapper`. It runs the command with `subprocess.Popen` **through a pty**,
 splits output on `\r`, and for every chunk calls every registered callback with
-`(chunk_bytes, Popen)` (`util/helper.py:104-106,140-141`). All five block until
+`(chunk_bytes, Popen)` (`util/helper.py:104-106,140-141`); labgrid main also
+passes a third `loglevel` argument, so the callback must accept it as optional.
+All five block until
 the child exits → **jobs**.
 
 | kind | driver.method | client resource | actual argv | CLI here |

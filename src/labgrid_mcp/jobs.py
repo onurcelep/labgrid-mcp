@@ -490,8 +490,11 @@ class JobRegistry:
             del self._by_place[job.place]
         self._targets.unpin(job.place, job.id)
 
-    def _capture_callback(self, chunk: bytes, process: Any) -> None:
+    def _capture_callback(self, chunk: bytes, process: Any, loglevel: int | None = None) -> None:
         """Process-global ``processwrapper`` callback: demux by thread ident (§11.11).
+
+        ``loglevel`` is optional because labgrid passes it only from versions
+        that support per-call log levels; older releases call with two args.
 
         Runs in the flash job's worker thread. Chunks from any non-flash thread
         (labgrid's own ``enable_logging``/``enable_print`` register global
