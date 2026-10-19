@@ -522,6 +522,30 @@ async def test_two_concurrent_jobs_capture_with_zero_crosstalk(tmp_path: Path) -
     await reg.shutdown()
 
 
+@pytest.mark.parametrize("extra_args", [(), (20,)], ids=["chunk-process", "with-loglevel"])
+async def test_capture_callback_accepts_both_processwrapper_call_shapes(
+    extra_args: tuple[int, ...],
+) -> None:
+    """labgrid main passes ``(chunk, process, loglevel)``; 26.x passes ``(chunk, process)``."""
+    reg = make_registry()
+
+    class _Proc:
+        pid = 4242
+
+    def fn() -> object:
+        # Only our callback: labgrid's own callbacks match only their version's shape.
+        reg._capture_callback(b"SHAPE", _Proc(), *extra_args)
+        return None
+
+    job = (await reg.submit("p", "dfu", fn))["job"]
+    assert isinstance(job, str)
+    assert await wait_true(lambda: reg.status(job)["state"] == "completed")
+    assert "SHAPE" in str(reg.logs(job)["data"])
+    assert reg._jobs[job].pid == 4242
+
+    await reg.shutdown()
+
+
 async def test_logs_bound_drops_oldest_and_flags_truncated(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
