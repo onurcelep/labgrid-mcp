@@ -348,6 +348,9 @@ uv run pytest -m integration
 Architecture, decision log, and a verified reference of labgrid's
 internals: [`docs/DESIGN.md`](docs/DESIGN.md).
 
+Contributions are welcome; see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the
+workflow, the full check list, and the DCO sign-off requirement.
+
 </details>
 
 ## License
