@@ -1,0 +1,59 @@
+name: DCO
+
+# Every contributed commit must carry a Signed-off-by trailer matching its
+# author email (Developer Certificate of Origin, see CONTRIBUTING.md).
+# Exempt: PRs opened by the repo owner (incl. factory propagation PRs, whose
+# commits have no GitHub login), and individual commits by the owner or
+# known bots inside a contributor's PR (maintainer fixups). The check reads
+# commit metadata through the API only: no checkout, no PR code executed.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  dco:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check Signed-off-by on every commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          OWNER: ${{ github.event.repository.owner.login }}
+        run: |
+          if [ "$PR_AUTHOR" = "$OWNER" ]; then
+            echo "PR opened by the repo owner; DCO not required."
+            exit 0
+          fi
+          # One TSV line per non-merge commit: sha, author email, signed (true/false).
+          gh api --paginate "repos/$REPO/pulls/$PR/commits" --jq '
+            .[]
+            | select((.parents | length) < 2)
+            | select((.author.login // "") as $l
+                | [$ENV.OWNER, "claude[bot]", "dependabot[bot]"] | index($l) | not)
+            | (.commit.author.email | ascii_downcase) as $email
+            | [ .sha[0:12], $email,
+                ( .commit.message | ascii_downcase | split("\n")
+                  | map(sub("\\s+$"; ""))
+                  | any(startswith("signed-off-by:") and endswith("<" + $email + ">")) ) ]
+            | @tsv' > commits.tsv
+          bad=0
+          while IFS=$'\t' read -r sha email signed; do
+            if [ "$signed" != "true" ]; then
+              echo "::error::Commit $sha has no 'Signed-off-by: ... <$email>' trailer"
+              bad=1
+            fi
+          done < commits.tsv
+          if [ "$bad" -ne 0 ]; then
+            echo "Sign off with 'git commit -s' (fix existing commits with" \
+                 "'git rebase --signoff origin/main'), then force-push. See CONTRIBUTING.md."
+            exit 1
+          fi
+          echo "All $(wc -l < commits.tsv) contributed commit(s) are signed off."
