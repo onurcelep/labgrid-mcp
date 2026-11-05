@@ -135,11 +135,12 @@ _DRIVERS: dict[str, Any] = {
 _FLASH_KINDS = frozenset({"dfu", "fastboot", "script", "bootstrap", "write_image"})
 
 # Driver kinds that accept an optional per-resource NAME (§11.14). Scoped to
-# power + io this phase: they are the two hardware-free driver families, and a
-# 2-same-class-resource place is currently *unusable* for them (labgrid's
-# ``get_resource`` raises "multiple resources matching" with ``name=None``).
-# console/mux/flash naming is an additive follow-up on the SAME plumbing.
-_NAMED_KINDS = frozenset({"power", "io"})
+# power + io + ssh: a 2-same-class-resource place is otherwise *unusable* for
+# them (labgrid's ``get_resource`` raises "multiple resources matching" with
+# ``name=None``); ssh because DUT and gateway are commonly both exported as
+# ``NetworkService``. console/mux/flash naming is an additive follow-up on the
+# SAME plumbing.
+_NAMED_KINDS = frozenset({"power", "io", "ssh"})
 
 # BootstrapProtocol loader selector (§11.11's driver inventory table, P5
 # review follow-up): all five expose ``load(filename)``; "imx" (IMXUSBDriver)
@@ -525,7 +526,7 @@ class TargetManager:
 
     # ---- ssh (§11.13) ----------------------------------------------------
 
-    async def ssh_driver(self, place: str) -> Any:
+    async def ssh_driver(self, place: str, resource_name: str | None = None) -> Any:
         """Bind + activate an ``SSHDriver`` against ``place`` and RETURN it.
 
         Requires :attr:`Config.ssh_keyfile` to be set -- ``NetworkService``
@@ -546,21 +547,25 @@ class TargetManager:
         so it is set BEFORE ``target.activate()`` ever runs. Cached under the
         ``"ssh"`` key so a repeat call reuses the same driver/ControlMaster
         and ``invalidate``'s ``deactivate_all_drivers`` tears it down.
+        ``resource_name`` (§11.14) picks one of several ``NetworkService``
+        resources, cached under ``"ssh:name:<name>"`` like the power/io kinds.
         """
         if not self._config.ssh_keyfile:
             raise TargetError("LABGRID_MCP_SSH_KEYFILE is not set; SSH tools need a private key")
         async with self._lock_for(place):
             cached = await self._get_or_build(place)
-            return await asyncio.to_thread(self._activate_ssh, cached, place)
+            return await asyncio.to_thread(self._activate_ssh, cached, place, resource_name)
 
-    def _activate_ssh(self, cached: _Cached, place: str) -> Any:
+    def _activate_ssh(self, cached: _Cached, place: str, resource_name: str | None) -> Any:
         try:
-            drv = cached.drivers.get("ssh")
+            cache_key = "ssh" if resource_name is None else f"ssh:name:{resource_name}"
+            drv = cached.drivers.get(cache_key)
             if drv is None:
                 driver_cls = _DRIVERS["ssh"]
-                drv = driver_cls(cached.target, name=None, keyfile=self._config.ssh_keyfile)
+                name = self._resolve_resource_name(cached, place, driver_cls, "ssh", resource_name)
+                drv = driver_cls(cached.target, name=name, keyfile=self._config.ssh_keyfile)
                 cached.target.activate(drv)
-                cached.drivers["ssh"] = drv
+                cached.drivers[cache_key] = drv
             return drv
         except TargetError:
             raise
@@ -795,7 +800,7 @@ class TargetManager:
         stale driver of the wrong class.
 
         ``resource_name`` (§11.14) picks one of several same-class resources for
-        the nameable kinds (:data:`_NAMED_KINDS` — power/io). It is folded into
+        the nameable kinds (:data:`_NAMED_KINDS` — power/io/ssh). It is folded into
         the cache key (``power`` → ``power:name:<name>``, mirroring the loader
         key) so two named drivers cache independently; ``name=None`` keeps the
         byte-identical single-resource path (same cache key, no

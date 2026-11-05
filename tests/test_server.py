@@ -319,6 +319,7 @@ class _StubTargets:
     sd_mux_mode_calls: list[str] = field(default_factory=list)
     usb_mux_calls: list[tuple[str, list[str]]] = field(default_factory=list)
     ssh_driver_calls: list[str] = field(default_factory=list)
+    ssh_driver_names: list[str | None] = field(default_factory=list)
     invalidate_calls: list[str] = field(default_factory=list)
     shutdown_calls: int = 0
 
@@ -367,8 +368,9 @@ class _StubTargets:
         if self.usb_mux_error is not None:
             raise self.usb_mux_error
 
-    async def ssh_driver(self, place: str) -> object:
+    async def ssh_driver(self, place: str, resource_name: str | None = None) -> object:
         self.ssh_driver_calls.append(place)
+        self.ssh_driver_names.append(resource_name)
         if isinstance(self.ssh_driver_value, TargetError):
             raise self.ssh_driver_value
         return self.ssh_driver_value
@@ -535,12 +537,17 @@ class _StubForwards:
     sessions_value: list[dict[str, object]] = field(default_factory=list)
     open_calls: list[tuple[str, int, int]] = field(default_factory=list)
     open_remote_calls: list[tuple[str, int, int]] = field(default_factory=list)
+    open_names: list[str | None] = field(default_factory=list)
+    open_remote_names: list[str | None] = field(default_factory=list)
     close_calls: list[str] = field(default_factory=list)
     close_place_calls: list[str] = field(default_factory=list)
     shutdown_calls: int = 0
 
-    async def open(self, place: str, remote_port: int, local_port: int = 0) -> dict[str, object]:
+    async def open(
+        self, place: str, remote_port: int, local_port: int = 0, resource_name: str | None = None
+    ) -> dict[str, object]:
         self.open_calls.append((place, remote_port, local_port))
+        self.open_names.append(resource_name)
         if isinstance(self.open_value, (ForwardError, TargetError)):
             raise self.open_value
         return self.open_value or {
@@ -550,8 +557,11 @@ class _StubForwards:
             "remote_port": remote_port,
         }
 
-    async def open_remote(self, place: str, remote_port: int, local_port: int) -> dict[str, object]:
+    async def open_remote(
+        self, place: str, remote_port: int, local_port: int, resource_name: str | None = None
+    ) -> dict[str, object]:
         self.open_remote_calls.append((place, remote_port, local_port))
+        self.open_remote_names.append(resource_name)
         if isinstance(self.open_remote_value, (ForwardError, TargetError)):
             raise self.open_remote_value
         return self.open_remote_value or {
@@ -4782,6 +4792,33 @@ async def test_ssh_run_joins_line_lists_and_returns_exit_code() -> None:
     assert driver.run_calls == [("echo hi", 30.0)]  # default timeout passed through
 
 
+async def test_ssh_run_forwards_resource_name_and_echoes_it() -> None:
+    driver = _FakeSSHDriver(run_result=(["ok"], [], 0))
+    targets = _ssh_targets(driver)
+    mcp = build_server(
+        _config(),
+        _owned_stub(),
+        _session(),
+        targets,
+        _stub_consoles(),
+        _stub_jobs(),
+        _stub_forwards(),
+    )
+
+    _content, structured = await _call_tool(
+        mcp, "ssh_run", {"place": "p1", "command": "uname", "resource_name": "dut-network"}
+    )
+
+    assert structured == {
+        "place": "p1",
+        "stdout": "ok",
+        "stderr": "",
+        "exit_code": 0,
+        "resource_name": "dut-network",
+    }
+    assert targets.ssh_driver_names == ["dut-network"]
+
+
 async def test_ssh_run_unowned_place_errors_before_driver() -> None:
     driver = _FakeSSHDriver()
     mcp = build_server(
@@ -4921,6 +4958,40 @@ async def test_put_file_returns_local_size(tmp_path: Path) -> None:
     assert driver.put_calls == [(str(src), "/tmp/f")]
 
 
+async def test_put_file_forwards_resource_name_and_echoes_it(tmp_path: Path) -> None:
+    src = tmp_path / "f.bin"
+    src.write_bytes(b"hello")
+    targets = _ssh_targets(_FakeSSHDriver())
+    mcp = build_server(
+        _config(),
+        _owned_stub(),
+        _session(),
+        targets,
+        _stub_consoles(),
+        _stub_jobs(),
+        _stub_forwards(),
+    )
+
+    _content, structured = await _call_tool(
+        mcp,
+        "put_file",
+        {
+            "place": "p1",
+            "local_path": str(src),
+            "remote_path": "/tmp/f",
+            "resource_name": "dut-network",
+        },
+    )
+
+    assert structured == {
+        "place": "p1",
+        "put": "/tmp/f",
+        "bytes": 5,
+        "resource_name": "dut-network",
+    }
+    assert targets.ssh_driver_names == ["dut-network"]
+
+
 async def test_put_file_missing_local_file_errors_before_driver(tmp_path: Path) -> None:
     driver = _FakeSSHDriver()
     mcp = build_server(
@@ -4984,6 +5055,39 @@ async def test_get_file_writes_local_and_reports_size(tmp_path: Path) -> None:
 
     assert structured == {"place": "p1", "got": str(dest), "bytes": 4}
     assert driver.get_calls == [("/tmp/r", str(dest))]
+
+
+async def test_get_file_forwards_resource_name_and_echoes_it(tmp_path: Path) -> None:
+    dest = tmp_path / "out.bin"
+    targets = _ssh_targets(_FakeSSHDriver(get_writes=b"abcd"))
+    mcp = build_server(
+        _config(),
+        _owned_stub(),
+        _session(),
+        targets,
+        _stub_consoles(),
+        _stub_jobs(),
+        _stub_forwards(),
+    )
+
+    _content, structured = await _call_tool(
+        mcp,
+        "get_file",
+        {
+            "place": "p1",
+            "remote_path": "/tmp/r",
+            "local_path": str(dest),
+            "resource_name": "gateway-network",
+        },
+    )
+
+    assert structured == {
+        "place": "p1",
+        "got": str(dest),
+        "bytes": 4,
+        "resource_name": "gateway-network",
+    }
+    assert targets.ssh_driver_names == ["gateway-network"]
 
 
 async def test_get_file_refuses_existing_without_overwrite(tmp_path: Path) -> None:
@@ -5095,6 +5199,34 @@ async def test_forward_open_returns_registry_handle() -> None:
         "remote_port": 8080,
     }
     assert forwards.open_calls == [("p1", 8080, 0)]
+
+
+async def test_forward_open_forwards_resource_name_to_registry() -> None:
+    forwards = _stub_forwards()
+    mcp = build_server(
+        _config(), _owned_stub(), _session(), _targets(), _stub_consoles(), _stub_jobs(), forwards
+    )
+
+    await _call_tool(
+        mcp, "forward_open", {"place": "p1", "remote_port": 22, "resource_name": "dut-network"}
+    )
+
+    assert forwards.open_names == ["dut-network"]
+
+
+async def test_forward_remote_open_forwards_resource_name_to_registry() -> None:
+    forwards = _stub_forwards()
+    mcp = build_server(
+        _config(), _owned_stub(), _session(), _targets(), _stub_consoles(), _stub_jobs(), forwards
+    )
+
+    await _call_tool(
+        mcp,
+        "forward_remote_open",
+        {"place": "p1", "remote_port": 9000, "local_port": 8000, "resource_name": "dut-network"},
+    )
+
+    assert forwards.open_remote_names == ["dut-network"]
 
 
 async def test_forward_open_unowned_place_errors_before_registry() -> None:

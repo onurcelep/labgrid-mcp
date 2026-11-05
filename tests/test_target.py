@@ -700,6 +700,83 @@ async def test_ssh_driver_bind_failure_wraps_targeterror(
         await tm.ssh_driver("p")
 
 
+class NamedSSHDriver:
+    bindings = {"networkservice": "NetworkService"}
+
+    def __init__(self, target: Any, name: str | None = None, keyfile: str | None = None) -> None:
+        self.name = name
+        self.keyfile = keyfile
+
+
+def _ssh_client(names: list[str], place: str = "p") -> FakeClient:
+    """An owned place exporting one ``NetworkService`` per name in ``names``."""
+    client = FakeClient()
+    client._places[place] = {
+        "name": place,
+        "acquired": IDENTITY,
+        "acquired_resources": [["exp", "grp", "NetworkService", n] for n in names],
+    }
+    return client
+
+
+async def test_ssh_driver_named_resource_binds_and_caches_each_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    w = wire(monkeypatch, drivers={"ssh": NamedSSHDriver})
+    tm = TargetManager(
+        _ssh_client(["dut-network", "gateway-network"]),
+        make_config(ssh_keyfile="/keys/id_ed25519"),
+    )
+
+    dut = await tm.ssh_driver("p", resource_name="dut-network")
+    gw = await tm.ssh_driver("p", resource_name="gateway-network")
+    again = await tm.ssh_driver("p", resource_name="dut-network")
+
+    assert dut.name == "dut-network" and gw.name == "gateway-network"
+    assert dut.keyfile == gw.keyfile == "/keys/id_ed25519"
+    assert again is dut
+    assert set(tm._targets["p"].drivers) == {"ssh:name:dut-network", "ssh:name:gateway-network"}
+    assert w.targets[0].binding_maps == [
+        {"networkservice": "dut-network"},
+        {"networkservice": "gateway-network"},
+    ]
+
+
+async def test_ssh_driver_multiple_services_without_name_lists_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    w = wire(monkeypatch, drivers={"ssh": NamedSSHDriver})
+    tm = TargetManager(
+        _ssh_client(["dut-network", "gateway-network"]),
+        make_config(ssh_keyfile="/keys/id_ed25519"),
+    )
+
+    with pytest.raises(
+        TargetError,
+        match=r"place 'p' has multiple ssh resources \(dut-network, gateway-network\); "
+        r"pass resource_name",
+    ):
+        await tm.ssh_driver("p")
+    assert w.targets[0].activated == []
+
+
+async def test_ssh_driver_unknown_name_lists_available_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wire(monkeypatch, drivers={"ssh": NamedSSHDriver})
+    tm = TargetManager(
+        _ssh_client(["dut-network", "gateway-network"]),
+        make_config(ssh_keyfile="/keys/id_ed25519"),
+    )
+
+    with pytest.raises(
+        TargetError,
+        match=r"no ssh resource named 'nope' on place 'p'; "
+        r"available: dut-network, gateway-network",
+    ):
+        await tm.ssh_driver("p", resource_name="nope")
+
+
 # ---- ownership / existence gate (before any build) ------------------------
 
 
