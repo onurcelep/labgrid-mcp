@@ -71,8 +71,10 @@ class FakeTargets:
     def __init__(self) -> None:
         self.drivers: dict[str, FakeDriver] = {}
         self.ssh_error: BaseException | None = None
+        self.resource_names: list[str | None] = []
 
-    async def ssh_driver(self, place: str) -> FakeDriver:
+    async def ssh_driver(self, place: str, resource_name: str | None = None) -> FakeDriver:
+        self.resource_names.append(resource_name)
         if self.ssh_error is not None:
             raise self.ssh_error
         drv = self.drivers.get(place)
@@ -122,6 +124,32 @@ async def test_open_returns_handle_and_drives_context_manager() -> None:
     local = handle["local_port"]
     assert local == 40000  # auto-assigned (local_port=0 -> None -> get_free_port)
     assert targets.drivers["p"].opened == [(8080, 40000)]
+
+    await reg.shutdown()
+
+
+async def test_open_named_resource_reaches_ssh_driver_and_is_reported() -> None:
+    targets = FakeTargets()
+    reg = make_registry(targets)
+
+    handle = await reg.open("p", 22, resource_name="gateway-network")
+
+    assert targets.resource_names == ["gateway-network"]
+    assert handle["resource_name"] == "gateway-network"
+    assert reg.sessions()[0]["resource_name"] == "gateway-network"
+
+    await reg.shutdown()
+
+
+async def test_open_remote_named_resource_reaches_ssh_driver_and_is_reported() -> None:
+    targets = FakeTargets()
+    reg = make_registry(targets)
+
+    handle = await reg.open_remote("p", 9000, 8000, resource_name="dut-network")
+
+    assert targets.resource_names == ["dut-network"]
+    assert handle["resource_name"] == "dut-network"
+    assert reg.sessions()[0]["resource_name"] == "dut-network"
 
     await reg.shutdown()
 

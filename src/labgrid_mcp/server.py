@@ -113,7 +113,7 @@ class _TargetsLike(Protocol):
     async def sd_mux(self, place: str, mode: str) -> None: ...
     async def sd_mux_mode(self, place: str) -> str: ...
     async def usb_mux(self, place: str, links: list[str]) -> None: ...
-    async def ssh_driver(self, place: str) -> Any: ...
+    async def ssh_driver(self, place: str, resource_name: str | None = None) -> Any: ...
     async def invalidate(self, place: str) -> None: ...
     async def shutdown(self) -> None: ...
 
@@ -134,10 +134,10 @@ class _ForwardsLike(Protocol):
     """Surface of ``ForwardRegistry`` this module calls."""
 
     async def open(
-        self, place: str, remote_port: int, local_port: int = 0
+        self, place: str, remote_port: int, local_port: int = 0, resource_name: str | None = None
     ) -> dict[str, object]: ...
     async def open_remote(
-        self, place: str, remote_port: int, local_port: int
+        self, place: str, remote_port: int, local_port: int, resource_name: str | None = None
     ) -> dict[str, object]: ...
     async def close(self, forward: str) -> dict[str, object]: ...
     async def close_place(self, place: str) -> None: ...
@@ -1074,7 +1074,12 @@ def build_server(
     if is_enabled(Category.SSH, config):
 
         @mcp.tool(annotations=destructive_annotations)
-        async def ssh_run(place: str, command: str, timeout_s: float = 30.0) -> dict[str, object]:
+        async def ssh_run(
+            place: str,
+            command: str,
+            timeout_s: float = 30.0,
+            resource_name: str | None = None,
+        ) -> dict[str, object]:
             """Run ``command`` over SSH on an acquired place and return its result.
 
             Binds an ``SSHDriver`` (target.py, §11.13) and shells out via
@@ -1090,10 +1095,13 @@ def build_server(
             until it finishes or the ControlMaster tears down. CAVEAT: labgrid
             whitespace-splits ``command`` (``cmd.split(" ")``) with no shell
             quoting, so multi-space or quoted arguments will split wrong.
+            ``resource_name`` (§11.14) picks one of several ``NetworkService``
+            resources (e.g. a DUT and its gateway); omit it for a single-service
+            place. A non-None value is echoed in the result.
             """
             _check_place_owned(client, config, place)
             try:
-                driver = await targets.ssh_driver(place)
+                driver = await targets.ssh_driver(place, resource_name=resource_name)
             except TargetError as exc:
                 raise ToolError(str(exc)) from exc
             try:
@@ -1108,20 +1116,26 @@ def build_server(
                 ) from exc
             except Exception as exc:
                 raise ToolError(f"ssh_run on {place!r} failed: {exc}") from exc
-            return {
+            result: dict[str, object] = {
                 "place": place,
                 "stdout": "\n".join(stdout),
                 "stderr": "\n".join(stderr),
                 "exit_code": int(exit_code),
             }
+            if resource_name is not None:
+                result["resource_name"] = resource_name
+            return result
 
         @mcp.tool(annotations=destructive_annotations)
-        async def put_file(place: str, local_path: str, remote_path: str) -> dict[str, object]:
+        async def put_file(
+            place: str, local_path: str, remote_path: str, resource_name: str | None = None
+        ) -> dict[str, object]:
             """Copy a local file to ``remote_path`` on an acquired place (scp).
 
             The local file must exist (a missing one is a pinned ToolError,
             checked before the driver is bound). Returns
             ``{"place", "put": remote_path, "bytes": <local size>}``.
+            ``resource_name`` selects the ``NetworkService`` as in ``ssh_run``.
             """
             _check_place_owned(client, config, place)
             src = Path(local_path)
@@ -1129,18 +1143,25 @@ def build_server(
                 raise ToolError(f"local file {local_path!r} does not exist")
             size = src.stat().st_size
             try:
-                driver = await targets.ssh_driver(place)
+                driver = await targets.ssh_driver(place, resource_name=resource_name)
             except TargetError as exc:
                 raise ToolError(str(exc)) from exc
             try:
                 await asyncio.to_thread(driver.put, local_path, remote_path)
             except Exception as exc:
                 raise ToolError(f"put_file to {place!r} failed: {exc}") from exc
-            return {"place": place, "put": remote_path, "bytes": size}
+            result: dict[str, object] = {"place": place, "put": remote_path, "bytes": size}
+            if resource_name is not None:
+                result["resource_name"] = resource_name
+            return result
 
         @mcp.tool(annotations=reserve_annotations)
         async def get_file(
-            place: str, remote_path: str, local_path: str, overwrite: bool = False
+            place: str,
+            remote_path: str,
+            local_path: str,
+            overwrite: bool = False,
+            resource_name: str | None = None,
         ) -> dict[str, object]:
             """Copy ``remote_path`` from an acquired place to ``local_path`` (scp).
 
@@ -1148,6 +1169,7 @@ def build_server(
             ToolError); the parent directory must already exist. Returns
             ``{"place", "got": local_path, "bytes": <resulting size>}``. NOT
             read-only (it writes a local file), but non-destructive to the DUT.
+            ``resource_name`` selects the ``NetworkService`` as in ``ssh_run``.
             """
             _check_place_owned(client, config, place)
             dest = Path(local_path)
@@ -1158,7 +1180,7 @@ def build_server(
             if not dest.parent.is_dir():
                 raise ToolError(f"parent directory {str(dest.parent)!r} does not exist")
             try:
-                driver = await targets.ssh_driver(place)
+                driver = await targets.ssh_driver(place, resource_name=resource_name)
             except TargetError as exc:
                 raise ToolError(str(exc)) from exc
             try:
@@ -1166,28 +1188,32 @@ def build_server(
             except Exception as exc:
                 raise ToolError(f"get_file from {place!r} failed: {exc}") from exc
             size = dest.stat().st_size if dest.exists() else 0
-            return {"place": place, "got": local_path, "bytes": size}
+            result: dict[str, object] = {"place": place, "got": local_path, "bytes": size}
+            if resource_name is not None:
+                result["resource_name"] = resource_name
+            return result
 
         @mcp.tool(annotations=reserve_annotations)
         async def forward_open(
-            place: str, remote_port: int, local_port: int = 0
+            place: str, remote_port: int, local_port: int = 0, resource_name: str | None = None
         ) -> dict[str, object]:
             """Open a local port-forward tunnel to ``remote_port`` on a place.
 
             ``local_port=0`` (default) auto-assigns a free local port. Returns
             ``{"forward", "place", "local_port", "remote_port"}``. Multiple
             tunnels per place are allowed (forwards.py, §11.13). The ownership
-            check runs first, before any registry call.
+            check runs first, before any registry call. ``resource_name``
+            selects the ``NetworkService`` as in ``ssh_run``.
             """
             _check_place_owned(client, config, place)
             try:
-                return await forwards.open(place, remote_port, local_port)
+                return await forwards.open(place, remote_port, local_port, resource_name)
             except (ForwardError, TargetError) as exc:
                 raise ToolError(str(exc)) from exc
 
         @mcp.tool(annotations=reserve_annotations)
         async def forward_remote_open(
-            place: str, remote_port: int, local_port: int
+            place: str, remote_port: int, local_port: int, resource_name: str | None = None
         ) -> dict[str, object]:
             """Open a REMOTE (``-R``) port-forward tunnel on a place.
 
@@ -1201,10 +1227,11 @@ def build_server(
             ``forward_list``/``forward_close`` (and the ``labgrid://sessions``
             forwards payload) work identically regardless of direction. The
             ownership check runs first, before any registry call.
+            ``resource_name`` selects the ``NetworkService`` as in ``ssh_run``.
             """
             _check_place_owned(client, config, place)
             try:
-                return await forwards.open_remote(place, remote_port, local_port)
+                return await forwards.open_remote(place, remote_port, local_port, resource_name)
             except (ForwardError, TargetError) as exc:
                 raise ToolError(str(exc)) from exc
 

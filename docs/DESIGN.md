@@ -277,7 +277,7 @@ not shipped. Both are permanent decisions.
 **Capability-gap closures:** the highest-value gaps identified by a
 systematic review of `labgrid-client`'s full command surface (§11.14) —
 per-resource **name selection** for
-power/io (`resource_name` on all four get/set tools; a place
+power/io (`resource_name` on all four get/set tools, and on the SSH tools; a place
 with two same-class resources was previously unusable, not merely
 first-match), power **cycle delay** (`set_power`'s `delay`), remote
 **forward `-R`** (`forward_remote_open`), conditional **`release_from`**, and
@@ -306,7 +306,7 @@ scope without a device.
 namespace isolation (`netns`), write-files-only variants beyond `put_file`/
 `get_file`, `rsync`, extra `fastboot`/`dfu` verbs beyond what `flash_dfu`/
 `flash_fastboot` already cover, per-resource-name selection on mux/flash/
-console (`resource_name` is scoped to power+io only, by design), and
+console (`resource_name` is scoped to power, io and the SSH tools, by design), and
 server-side `resources`/`places` filters (both list tools return everything;
 filtering is client-side). None are hardware boundaries — they remain
 open scope decisions, not technical blockers.
@@ -1391,7 +1391,11 @@ optional `resource_name` is threaded through and folded into the per-Target
 driver cache key
 (`power` → `power:name:<name>`, mirroring `bootstrap:<loader>`) so two named
 drivers cache independently; `name=None` keeps the byte-identical single-resource
-path (same cache key, no `set_binding_map`). **Scoped to power+io.**
+path (same cache key, no `set_binding_map`). **Scoped to power+io, plus the
+SSH tools** (`ssh_run`, `put_file`, `get_file`, both forward opens: DUT and
+gateway are often both exported as `NetworkService`; `ssh` caches under
+`ssh:name:<name>`, and a named forward reports its `resource_name` in
+`forward_list`).
 Candidate names are enumerated from the place snapshot's `acquired_resources`
 (`[exporter, group, cls, name]`) filtered by the driver's binding class(es), and
 `TargetError` is raised **by this server** — `name=None` + >1 candidate → "pass

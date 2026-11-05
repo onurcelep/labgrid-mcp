@@ -88,7 +88,8 @@ class _Forward:
     counterparts captured at the same instants, for display/logging. ``cm`` is
     labgrid's ``forward_local_port`` context manager, held open between
     :meth:`ForwardRegistry.open` (``__enter__``) and the eventual close
-    (``__exit__``).
+    (``__exit__``). ``resource_name`` is the ``NetworkService`` the tunnel
+    rides (``None`` for the place's single service).
     """
 
     id: str
@@ -101,6 +102,7 @@ class _Forward:
     last_used: float
     last_used_at: float
     cm: Any
+    resource_name: str | None = None
 
 
 class ForwardRegistry:
@@ -144,7 +146,13 @@ class ForwardRegistry:
 
     # ---- public API -----------------------------------------------------
 
-    async def open(self, place: str, remote_port: int, local_port: int = 0) -> dict[str, object]:
+    async def open(
+        self,
+        place: str,
+        remote_port: int,
+        local_port: int = 0,
+        resource_name: str | None = None,
+    ) -> dict[str, object]:
         """Open a local forward to ``remote_port`` on ``place``; return its handle.
 
         ``local_port == 0`` (the default) lets labgrid pick a free local port.
@@ -152,10 +160,11 @@ class ForwardRegistry:
         re-checks ownership and raises ``TargetError`` for an unknown/unacquired
         place or an unset keyfile (propagated to the caller). A failure to
         actually establish the tunnel (``ssh -O forward`` non-zero) surfaces as
-        :class:`ForwardError`, cause attached.
+        :class:`ForwardError`, cause attached. ``resource_name`` (§11.14) picks
+        the ``NetworkService`` to tunnel through and is echoed when given.
         """
         async with self._lock:
-            driver = await self._targets.ssh_driver(place)
+            driver = await self._targets.ssh_driver(place, resource_name=resource_name)
             try:
                 cm, chosen = await asyncio.to_thread(
                     self._open_forward, driver, remote_port, local_port
@@ -178,16 +187,26 @@ class ForwardRegistry:
                 last_used=now,
                 last_used_at=now_wall,
                 cm=cm,
+                resource_name=resource_name,
             )
             self._ensure_sweeper()
-            return {
+            handle: dict[str, object] = {
                 "forward": fid,
                 "place": place,
                 "local_port": chosen,
                 "remote_port": remote_port,
             }
+            if resource_name is not None:
+                handle["resource_name"] = resource_name
+            return handle
 
-    async def open_remote(self, place: str, remote_port: int, local_port: int) -> dict[str, object]:
+    async def open_remote(
+        self,
+        place: str,
+        remote_port: int,
+        local_port: int,
+        resource_name: str | None = None,
+    ) -> dict[str, object]:
         """Open a REMOTE (``-R``) forward from ``remote_port`` on ``place`` to
         ``local_port`` on this host; return its handle (§11.14).
 
@@ -199,7 +218,7 @@ class ForwardRegistry:
         wraps into :class:`ForwardError`.
         """
         async with self._lock:
-            driver = await self._targets.ssh_driver(place)
+            driver = await self._targets.ssh_driver(place, resource_name=resource_name)
             try:
                 cm = await asyncio.to_thread(
                     self._open_remote_forward, driver, remote_port, local_port
@@ -223,15 +242,19 @@ class ForwardRegistry:
                 last_used=now,
                 last_used_at=now_wall,
                 cm=cm,
+                resource_name=resource_name,
             )
             self._ensure_sweeper()
-            return {
+            handle: dict[str, object] = {
                 "forward": fid,
                 "place": place,
                 "direction": "remote",
                 "remote_port": remote_port,
                 "local_port": local_port,
             }
+            if resource_name is not None:
+                handle["resource_name"] = resource_name
+            return handle
 
     async def close(self, forward: str) -> dict[str, object]:
         """Close a tunnel by id (``ssh -O cancel``, best-effort). Idempotent path.
@@ -270,6 +293,7 @@ class ForwardRegistry:
                 "created_at": f.created_at,
                 "last_used": f.last_used,
                 "last_used_at": f.last_used_at,
+                **({"resource_name": f.resource_name} if f.resource_name is not None else {}),
             }
             for f in list(self._forwards.values())
         ]

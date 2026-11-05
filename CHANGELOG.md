@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **The SSH tools take an optional `resource_name`** (`ssh_run`,
+  `put_file`, `get_file`, `forward_open`, `forward_remote_open`) to pick one
+  of several `NetworkService` resources on a place (for example a DUT and
+  its gateway). Such places were previously unusable for SSH, which failed
+  with labgrid's "multiple resources matching" error. Without a name on such
+  a place, the tools now error with the list of available names. A named
+  forward reports its `resource_name` in `forward_list`.
+
 ## [0.1.5] - 2026-10-12
 
 ### Changed
