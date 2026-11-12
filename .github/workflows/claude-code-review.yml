@@ -75,15 +75,19 @@ jobs:
           # stripped from the runner's checkout), so plugins must be
           # self-loaded via these inputs rather than relying on settings.json.
           # Both inputs are newline-separated (per claude-code-action docs).
+          # code-review lives in claude-plugins-official; the old
+          # claude-code-plugins entry in anthropics/claude-code is only a
+          # redirect to it since anthropics/claude-code@aef1f311bf (2026-10-26).
           plugin_marketplaces: |
-            https://github.com/anthropics/claude-code.git
+            https://github.com/anthropics/claude-plugins-official.git
             https://github.com/onurcelep/ai-factory.git
           plugins: |
-            code-review@claude-code-plugins
+            code-review@claude-plugins-official
             factory@onur
           # --comment is required for the findings to reach the PR: since
-          # anthropics/claude-code@6dcc7d8b (2026-02-11) the command posts
-          # nothing without it, leaving the review only in the runner log.
+          # anthropics/claude-code@6dcc7d8b (2026-02-11, carried over unchanged
+          # to claude-plugins-official) the command posts nothing without it,
+          # leaving the review only in the runner log.
           # The eligibility override is load-bearing: /code-review opens with a
           # gate that stops without posting on PRs it judges automated or
           # trivially correct, and a propagation PR whose own body reads
