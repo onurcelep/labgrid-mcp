@@ -65,7 +65,12 @@ jobs:
           # purpose: a prefix allowlist cannot pin an api call to one endpoint,
           # so allowing it would hand this job the whole write surface of its
           # token. Trust boundary: docs/SECURITY-MODEL.md (review row).
-          claude_args: '--model opus --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr review:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(grep:*),Bash(wc:*),Bash(cat:*),Bash(head:*),Bash(tail:*)"'
+          # --permission-mode default keeps that allowlist strict: since
+          # claude-code-action v1.0.273 (2026-11-12) sessions start in auto
+          # mode, where a safety review can approve calls no allow rule covers.
+          # allowed_bots above also restores the old default, but only as a
+          # side effect; this pin keeps the bound if that input ever changes.
+          claude_args: '--model opus --permission-mode default --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr review:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(grep:*),Bash(wc:*),Bash(cat:*),Bash(head:*),Bash(tail:*)"'
           # Headless runs must not background subagents: the run can end with
           # their results still pending, so the agent posts nothing and only
           # narrates that it is waiting. Foreground subagents block until done.
